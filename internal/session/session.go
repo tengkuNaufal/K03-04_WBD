@@ -7,14 +7,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
 	"time"
 )
 
 type Config struct {
-	IdleTimeout      time.Duration 
-	AbsoluteTimeout  time.Duration 
-	RotationInterval time.Duration 
+	IdleTimeout      time.Duration
+	AbsoluteTimeout  time.Duration
+	RotationInterval time.Duration
 	GracePeriod      time.Duration
 }
 
@@ -66,21 +65,18 @@ type Session struct {
 	UserID            int64
 	CSRFToken         string
 	AbsoluteExpiresAt time.Time
-	NewToken string
+	NewToken          string
 }
 
 type Manager struct {
-	store  Store
-	cfg    Config
-	Now    func() time.Time
-	Random io.Reader
+	store Store
+	cfg   Config
+	Now   func() time.Time
 }
 
 func NewManager(store Store, cfg Config) *Manager {
-	return &Manager{store: store, cfg: cfg, Now: time.Now, Random: rand.Reader}
+	return &Manager{store: store, cfg: cfg, Now: time.Now}
 }
-
-func (m *Manager) Config() Config { return m.cfg }
 
 func HashToken(token string) []byte {
 	h := sha256.Sum256([]byte(token))
@@ -89,7 +85,7 @@ func HashToken(token string) []byte {
 
 func (m *Manager) randomString(n int) (string, error) {
 	b := make([]byte, n)
-	if _, err := io.ReadFull(m.Random, b); err != nil {
+	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("session: random: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
@@ -180,26 +176,6 @@ func (m *Manager) Validate(ctx context.Context, token string) (*Session, error) 
 		return nil, fmt.Errorf("session: touch: %w", err)
 	}
 	return s, nil
-}
-
-func (m *Manager) Rotate(ctx context.Context, token string) (string, error) {
-	now := m.Now()
-	f, t, err := m.store.Lookup(ctx, HashToken(token))
-	if err != nil {
-		return "", ErrInvalid
-	}
-	newToken, err := m.randomString(32)
-	if err != nil {
-		return "", err
-	}
-	ok, err := m.store.Rotate(ctx, f.ID, t.Hash, Token{Hash: HashToken(newToken), FamilyID: f.ID, IssuedAt: now}, now)
-	if err != nil {
-		return "", err
-	}
-	if !ok {
-		return "", ErrInvalid
-	}
-	return newToken, nil
 }
 
 func (m *Manager) Revoke(ctx context.Context, token string) error {
