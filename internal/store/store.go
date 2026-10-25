@@ -12,6 +12,7 @@ import (
 	"dbmp/internal/model"
 )
 
+//go:embed schema.sql
 var schema string
 
 type Store struct{ pool *pgxpool.Pool }
