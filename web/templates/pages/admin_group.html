@@ -1,0 +1,68 @@
+{{define "content"}}
+{{$g := .Data.Group}}
+<p class="crumb"><a href="/admin/groups">Groups</a> /</p>
+<h1>{{$g.Name}}</h1>
+
+<section class="card">
+  <h2>Akses database</h2>
+  <p class="muted small">View Only: melihat schema, data, dan riwayat migration. View + Edit: ditambah membuat, mengubah, dan menjalankan migration.</p>
+  {{if .Data.Grants}}
+  <table>
+    <thead><tr><th>Database</th><th>Tingkat akses</th><th></th></tr></thead>
+    <tbody>
+    {{range .Data.Grants}}
+      <tr><td>{{.DatabaseName}}</td><td><span class="lvl lvl-{{.Level}}">{{.Level.Label}}</span></td>
+        <td class="right">
+          <form method="post" action="/admin/groups/{{$g.ID}}/grants/{{.DatabaseID}}/remove">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            <button class="link danger">Cabut</button>
+          </form>
+        </td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}<p class="muted">Group ini belum memiliki akses database.</p>{{end}}
+  {{if .Data.Databases}}
+  <form method="post" action="/admin/groups/{{$g.ID}}/grants" class="row wrap">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <select name="database_id">{{range .Data.Databases}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select>
+    <select name="level"><option value="view">View Only</option><option value="edit">View + Edit</option></select>
+    <button>Simpan akses</button>
+  </form>
+  {{else}}<p class="muted">Belum ada koneksi database. <a href="/admin/databases/new">Tambah koneksi</a>.</p>{{end}}
+</section>
+
+<section class="card">
+  <h2>Anggota ({{len .Data.Members}})</h2>
+  {{if .Data.Members}}
+  <table>
+    <thead><tr><th>Username</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+    {{range .Data.Members}}
+      <tr><td><a href="/admin/users/{{.ID}}">{{.Username}}</a></td>
+        <td>{{if .IsActive}}<span class="status ok">aktif</span>{{else}}<span class="status bad">nonaktif</span>{{end}}</td>
+        <td class="right">
+          <form method="post" action="/admin/groups/{{$g.ID}}/members/{{.ID}}/remove">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            <button class="link danger">Keluarkan</button>
+          </form>
+        </td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}<p class="muted">Belum ada anggota.</p>{{end}}
+  <form method="post" action="/admin/groups/{{$g.ID}}/members" class="row">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <select name="user_id">{{range .Data.Users}}<option value="{{.ID}}">{{.Username}}</option>{{end}}</select>
+    <button>Tambah anggota</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Hapus group</h2>
+  <form method="post" action="/admin/groups/{{$g.ID}}/delete" data-confirm="Hapus group {{$g.Name}}? Anggota akan kehilangan akses yang diberikan group ini.">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <button class="danger">Hapus group</button>
+  </form>
+</section>
+{{end}}

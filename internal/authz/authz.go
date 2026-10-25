@@ -1,3 +1,4 @@
+// Package authz holds every authorization rule of the platform in one place.
 package authz
 
 import (
@@ -21,24 +22,21 @@ func (l Level) String() string {
 		return "view"
 	case LevelEdit:
 		return "edit"
-	default:
-		return "none"
 	}
+	return "none"
 }
 
-// Label is the human readable name shown in the UI.
+// Label is the name shown in the UI.
 func (l Level) Label() string {
 	switch l {
 	case LevelView:
 		return "View Only"
 	case LevelEdit:
 		return "View + Edit"
-	default:
-		return "Tidak ada akses"
 	}
+	return "Tidak ada akses"
 }
 
-// ParseLevel converts the stored text form into a Level.
 func ParseLevel(s string) (Level, error) {
 	switch s {
 	case "view":
@@ -49,58 +47,37 @@ func ParseLevel(s string) (Level, error) {
 	return LevelNone, fmt.Errorf("authz: invalid access level %q", s)
 }
 
+// EffectiveLevel is the access of a user that belongs to several groups:
+// the most permissive level wins.
 func EffectiveLevel(levels []Level) Level {
 	best := LevelNone
 	for _, l := range levels {
-		if l > best {
-			best = l
-		}
+		best = max(best, l)
 	}
 	return best
 }
 
-// Action is something a principal can attempt.
 type Action string
 
 const (
-	// Platform administration (Platform Admin only).
-	ActionManageUsers       Action = "platform.users.manage"
-	ActionManageGroups      Action = "platform.groups.manage"
-	ActionManageConnections Action = "platform.connections.manage"
-	ActionManageAccess      Action = "platform.access.manage"
-	ActionViewAudit         Action = "platform.audit.view"
-
-	// Actions on a single target database (granted through groups).
-	ActionViewSchema       Action = "db.schema.view"
-	ActionViewData         Action = "db.data.view"
-	ActionViewMigrations   Action = "db.migrations.view"
-	ActionCreateMigration  Action = "db.migrations.create"
-	ActionEditMigration    Action = "db.migrations.edit"
-	ActionDeleteMigration  Action = "db.migrations.delete"
-	ActionExecuteMigration Action = "db.migrations.execute"
-	ActionExplainMigration Action = "db.migrations.explain"
+	// ActionManagePlatform covers users, groups, connections and grants.
+	ActionManagePlatform Action = "platform.manage"
+	// ActionView covers schema, data and migration history of a database.
+	ActionView Action = "db.view"
+	// ActionEdit covers creating, editing, explaining and executing migrations.
+	ActionEdit Action = "db.edit"
 )
 
 type rule struct {
-	platform bool  // requires Platform Admin
-	minLevel Level // required database level (database actions only)
+	platform bool  // only Platform Admin
+	minLevel Level // database actions: required level
 }
 
+// rules is the single table of authorization rules.
 var rules = map[Action]rule{
-	ActionManageUsers:       {platform: true},
-	ActionManageGroups:      {platform: true},
-	ActionManageConnections: {platform: true},
-	ActionManageAccess:      {platform: true},
-	ActionViewAudit:         {platform: true},
-
-	ActionViewSchema:       {minLevel: LevelView},
-	ActionViewData:         {minLevel: LevelView},
-	ActionViewMigrations:   {minLevel: LevelView},
-	ActionCreateMigration:  {minLevel: LevelEdit},
-	ActionEditMigration:    {minLevel: LevelEdit},
-	ActionDeleteMigration:  {minLevel: LevelEdit},
-	ActionExecuteMigration: {minLevel: LevelEdit},
-	ActionExplainMigration: {minLevel: LevelEdit},
+	ActionManagePlatform: {platform: true},
+	ActionView:           {minLevel: LevelView},
+	ActionEdit:           {minLevel: LevelEdit},
 }
 
 var (
@@ -114,29 +91,22 @@ type Principal struct {
 	IsAdmin  bool
 }
 
+// AccessSource returns the levels of every group of a user on a database.
 type AccessSource interface {
 	GroupLevels(ctx context.Context, userID, databaseID int64) ([]Level, error)
 }
 
-type Policy struct {
-	src AccessSource
-}
+type Policy struct{ src AccessSource }
 
 func NewPolicy(src AccessSource) *Policy { return &Policy{src: src} }
 
+// Allows reports whether a database level permits a database action.
 func Allows(l Level, a Action) bool {
 	r, ok := rules[a]
-	if !ok || r.platform {
-		return false
-	}
-	return l >= r.minLevel
+	return ok && !r.platform && l >= r.minLevel && l > LevelNone
 }
 
-func IsPlatformAction(a Action) bool {
-	r, ok := rules[a]
-	return ok && r.platform
-}
-
+// Level returns the effective level of a user on a database.
 func (p *Policy) Level(ctx context.Context, pr *Principal, databaseID int64) (Level, error) {
 	if pr == nil {
 		return LevelNone, ErrUnauthenticated
@@ -148,13 +118,15 @@ func (p *Policy) Level(ctx context.Context, pr *Principal, databaseID int64) (Le
 	return EffectiveLevel(levels), nil
 }
 
+// Authorize checks an action. Platform Admin is not a database level: an
+// admin still needs a group to see a database.
 func (p *Policy) Authorize(ctx context.Context, pr *Principal, a Action, databaseID int64) error {
 	if pr == nil {
 		return ErrUnauthenticated
 	}
 	r, ok := rules[a]
 	if !ok {
-		return fmt.Errorf("%w: unknown action %q", ErrForbidden, a)
+		return ErrForbidden
 	}
 	if r.platform {
 		if pr.IsAdmin {
@@ -166,7 +138,7 @@ func (p *Policy) Authorize(ctx context.Context, pr *Principal, a Action, databas
 	if err != nil {
 		return err
 	}
-	if lvl == LevelNone || lvl < r.minLevel {
+	if !Allows(lvl, a) {
 		return ErrForbidden
 	}
 	return nil

@@ -1,0 +1,13 @@
+{{define "content"}}
+<section class="login">
+  <h1>Masuk</h1>
+  <p class="muted">Gunakan akun yang diberikan Platform Admin.</p>
+  <form method="post" action="/login" class="stack">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <input type="hidden" name="next" value="{{.Data.Next}}">
+    <label>Username <input name="username" value="{{.Data.Username}}" autocomplete="username" required autofocus></label>
+    <label>Password <input type="password" name="password" autocomplete="current-password" required></label>
+    <button class="primary">Login</button>
+  </form>
+</section>
+{{end}}

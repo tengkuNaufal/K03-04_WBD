@@ -1,0 +1,63 @@
+{{define "content"}}
+{{template "dbnav" .Data}}
+{{$d := .Data}}
+{{$base := printf "/db/%d/tables/%s/%s" $d.DB.ID (urlPath $d.Table.Schema) (urlPath $d.Table.Name)}}
+<section class="card">
+  <h2><span class="mono">{{$d.Table.Schema}}.{{$d.Table.Name}}</span> <span class="muted small">{{$d.Table.Kind}}</span></h2>
+  <nav class="tabs inline">
+    <a href="{{$base}}" class="{{if eq $d.Tab "structure"}}active{{end}}">Struktur</a>
+    <a href="{{$base}}?tab=data" class="{{if eq $d.Tab "data"}}active{{end}}">Data</a>
+  </nav>
+
+  {{if eq $d.Tab "structure"}}
+  <h3>Column</h3>
+  <table>
+    <thead><tr><th>Nama</th><th>Tipe</th><th>Nullable</th><th>Default</th></tr></thead>
+    <tbody>
+    {{range $d.Table.Columns}}
+      <tr><td class="mono">{{.Name}}</td><td class="mono">{{.Type}}</td>
+        <td>{{if .NotNull}}NOT NULL{{else}}<span class="muted">NULL</span>{{end}}</td><td class="mono">{{.Default}}</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+
+  <h3>Constraint</h3>
+  <table>
+    <thead><tr><th>Nama</th><th>Jenis</th><th>Definisi</th></tr></thead>
+    <tbody>
+    {{range $d.Table.Constraints}}<tr><td class="mono">{{.Name}}</td><td>{{.Type}}</td><td class="mono">{{.Definition}}</td></tr>
+    {{else}}<tr><td colspan="3" class="muted">Tidak ada constraint.</td></tr>{{end}}
+    </tbody>
+  </table>
+
+  <h3>Index</h3>
+  <table>
+    <thead><tr><th>Nama</th><th>Definisi</th></tr></thead>
+    <tbody>
+    {{range $d.Table.Indexes}}<tr><td class="mono">{{.Name}}</td><td class="mono">{{.Definition}}</td></tr>
+    {{else}}<tr><td colspan="2" class="muted">Tidak ada index.</td></tr>{{end}}
+    </tbody>
+  </table>
+
+  {{else}}
+  {{$r := $d.Rows}}
+  <div class="pager">
+    <span class="muted">Baris {{add $r.Offset 1}}–{{add $r.Offset (len $r.Rows)}}</span>
+    {{if $r.Offset}}<a href="{{$base}}?tab=data&amp;offset={{$r.Prev}}">&larr; Sebelumnya</a>{{end}}
+    {{if $r.HasMore}}<a href="{{$base}}?tab=data&amp;offset={{add $r.Offset $r.Limit}}">Berikutnya &rarr;</a>{{end}}
+  </div>
+  <div class="scroll">
+  <table class="data">
+    <thead><tr>{{range $r.Columns}}<th class="mono">{{.}}</th>{{end}}</tr></thead>
+    <tbody>
+    {{range $r.Rows}}
+      <tr>{{range .}}<td class="mono">{{if .}}{{.}}{{else}}<span class="null">NULL</span>{{end}}</td>{{end}}</tr>
+    {{else}}
+      <tr><td colspan="{{len $r.Columns}}" class="muted">Tidak ada data.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{end}}
+</section>
+{{end}}

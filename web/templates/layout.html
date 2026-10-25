@@ -1,0 +1,51 @@
+{{define "layout"}}<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · DBMP</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">DBMP<span>Database Management Platform</span></a>
+  {{if .User}}
+  <nav class="mainnav">
+    <a href="/">Database</a>
+    {{if .User.IsAdmin}}
+    <a href="/admin/users">Users</a>
+    <a href="/admin/groups">Groups</a>
+    <a href="/admin/databases">Koneksi</a>
+    {{end}}
+  </nav>
+  <div class="who">
+    <span>{{.User.Username}}{{if .User.IsAdmin}} <em class="badge">Platform Admin</em>{{end}}</span>
+    <form method="post" action="/logout">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button class="link">Logout</button>
+    </form>
+  </div>
+  {{end}}
+</header>
+<main>
+  {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
+  {{if .Error}}<div class="flash bad">{{.Error}}</div>{{end}}
+  {{template "content" .}}
+</main>
+</body>
+</html>{{end}}
+
+{{define "dbnav"}}
+<div class="dbhead">
+  <div>
+    <p class="crumb"><a href="/">Database</a> /</p>
+    <h1>{{.DB.Name}} <span class="lvl lvl-{{.Level}}">{{.Level.Label}}</span></h1>
+    <p class="muted mono">{{.DB.Username}}@{{.DB.Host}}:{{.DB.Port}}/{{.DB.DBName}}</p>
+  </div>
+  <nav class="tabs">
+    <a href="/db/{{.DB.ID}}">Schema &amp; Data</a>
+    <a href="/db/{{.DB.ID}}/migrations">Migration</a>
+  </nav>
+</div>
+{{end}}

@@ -1,0 +1,33 @@
+{{define "content"}}
+{{template "dbnav" .Data}}
+{{$d := .Data}}
+<div class="actions">
+  {{if canEdit $d.Level}}
+  <a class="button primary" href="/db/{{$d.DB.ID}}/migrations/new">+ Migration baru</a>
+  {{else}}
+  <span class="muted">Akses View Only: Anda dapat melihat riwayat dan detail migration.</span>
+  {{end}}
+</div>
+
+<section class="card">
+  <h2>Riwayat migration</h2>
+  <p class="muted small">Migration yang berhasil mendapat nomor versi berurutan (linear).</p>
+  {{if $d.Migrations}}
+  <table>
+    <thead><tr><th>Versi</th><th>Nama</th><th>Status</th><th>Dibuat oleh</th><th>Dieksekusi oleh</th><th>Waktu eksekusi</th></tr></thead>
+    <tbody>
+    {{range $d.Migrations}}
+      <tr>
+        <td class="mono">{{if .Version}}v{{.Version}}{{else}}-{{end}}</td>
+        <td><a href="/db/{{$d.DB.ID}}/migrations/{{.ID}}">{{.Name}}</a></td>
+        <td><span class="status {{.Status}}">{{.Status}}</span></td>
+        <td>{{.CreatedBy}}</td>
+        <td>{{.ExecutedBy}}</td>
+        <td>{{fmtTime .ExecutedAt}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}<p class="muted">Belum ada migration.</p>{{end}}
+</section>
+{{end}}

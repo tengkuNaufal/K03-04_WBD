@@ -1,0 +1,72 @@
+{{define "content"}}
+{{template "dbnav" .Data}}
+{{$d := .Data}}
+{{$m := $d.Migration}}
+{{$base := printf "/db/%d/migrations" $d.DB.ID}}
+{{$editable := and (canEdit $d.Level) (ne $m.Status "applied")}}
+<section class="card">
+  {{if $m.ID}}
+  <div class="spread">
+    <h2>{{$m.Name}}</h2>
+    <span class="status {{$m.Status}}">{{$m.Status}}{{if $m.Version}} · v{{$m.Version}}{{end}}</span>
+  </div>
+  <dl class="meta">
+    <dt>Dibuat</dt><dd>{{fmtTime $m.CreatedAt}} oleh {{$m.CreatedBy}}</dd>
+    {{if $m.ExecutedAt}}<dt>Dieksekusi</dt><dd>{{fmtTime $m.ExecutedAt}} oleh {{$m.ExecutedBy}}</dd>{{end}}
+    {{if $m.Error}}<dt>Error</dt><dd class="bad-text mono">{{$m.Error}}</dd>{{end}}
+  </dl>
+  {{else}}
+  <h2>Migration baru</h2>
+  <p class="muted small">SQL dijalankan dalam satu transaction: commit jika semua statement berhasil, rollback jika ada yang gagal. Jangan menulis BEGIN/COMMIT/ROLLBACK sendiri.</p>
+  {{end}}
+
+  {{if $editable}}
+  <form method="post" action="{{if $m.ID}}{{$base}}/{{$m.ID}}{{else}}{{$base}}{{end}}" class="stack">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <label>Nama <input name="name" value="{{$m.Name}}" maxlength="200" required></label>
+    <label>SQL <textarea name="sql" rows="16" class="sql" spellcheck="false" required>{{$m.SQL}}</textarea></label>
+    <div class="row"><button>Simpan</button></div>
+  </form>
+  {{else}}
+  <pre class="sql">{{$m.SQL}}</pre>
+  {{end}}
+</section>
+
+{{if and $editable $m.ID}}
+<section class="card">
+  <h2>Eksekusi</h2>
+  <p class="muted small">Yang dijalankan adalah SQL yang sudah disimpan.</p>
+  <div class="row wrap">
+    <form method="post" action="{{$base}}/{{$m.ID}}/explain" class="row">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <label class="check"><input type="checkbox" name="analyze" value="1" {{if $d.Analyze}}checked{{end}}> EXPLAIN ANALYZE</label>
+      <button>Analisis execution plan</button>
+    </form>
+    <form method="post" action="{{$base}}/{{$m.ID}}/execute" data-confirm="Jalankan migration ini pada database {{$d.DB.Name}}?">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button class="primary">Jalankan migration</button>
+    </form>
+    <form method="post" action="{{$base}}/{{$m.ID}}/delete" data-confirm="Hapus migration ini?">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button class="danger">Hapus</button>
+    </form>
+  </div>
+</section>
+{{end}}
+
+{{if $d.Explain}}
+<section class="card">
+  <h2>Execution plan {{if $d.Analyze}}(EXPLAIN ANALYZE){{else}}(EXPLAIN){{end}}</h2>
+  <p class="muted small">Dijalankan di dalam transaction yang selalu di-rollback; tidak ada perubahan yang disimpan.</p>
+  {{range $i, $e := $d.Explain}}
+  <div class="explain">
+    <h3>Statement {{add $i 1}}</h3>
+    <pre class="sql">{{$e.Statement}}</pre>
+    {{if $e.Plan}}<pre class="plan">{{$e.Plan}}</pre>{{end}}
+    {{if $e.Note}}<p class="muted small">{{$e.Note}}</p>{{end}}
+    {{if $e.Error}}<p class="bad-text mono">{{$e.Error}}</p>{{end}}
+  </div>
+  {{end}}
+</section>
+{{end}}
+{{end}}

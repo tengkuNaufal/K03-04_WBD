@@ -1,0 +1,33 @@
+{{define "content"}}
+{{$d := .Data}}
+<p class="crumb"><a href="/admin/databases">Koneksi</a> /</p>
+<h1>{{if $d.DB.ID}}{{$d.DB.Name}}{{else}}Koneksi baru{{end}}</h1>
+
+<section class="card">
+  <h2>Pengaturan koneksi PostgreSQL</h2>
+  <form method="post" action="{{if $d.DB.ID}}/admin/databases/{{$d.DB.ID}}{{else}}/admin/databases{{end}}" class="grid-form">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <label>Nama koneksi <input name="name" value="{{$d.DB.Name}}" maxlength="64" required></label>
+    <label>Host <input name="host" value="{{$d.DB.Host}}" required></label>
+    <label>Port <input type="number" name="port" value="{{$d.DB.Port}}" min="1" max="65535" required></label>
+    <label>Nama database <input name="dbname" value="{{$d.DB.DBName}}" required></label>
+    <label>Username <input name="username" value="{{$d.DB.Username}}" autocomplete="off" required></label>
+    <label>Password <input type="password" name="password" autocomplete="new-password" {{if not $d.DB.ID}}required{{else}}placeholder="(kosongkan untuk tetap memakai password lama)"{{end}}></label>
+    <label>SSL mode
+      <select name="sslmode">{{range $d.SSLModes}}<option value="{{.}}" {{if eq . $d.DB.SSLMode}}selected{{end}}>{{.}}</option>{{end}}</select>
+    </label>
+    <div class="row"><button class="primary">Uji &amp; simpan</button></div>
+  </form>
+  <p class="muted small">Password koneksi disimpan terenkripsi (AES-256-GCM) dan tidak pernah ditampilkan kembali.</p>
+</section>
+
+{{if $d.DB.ID}}
+<section class="card">
+  <h2>Hapus koneksi</h2>
+  <form method="post" action="/admin/databases/{{$d.DB.ID}}/delete" data-confirm="Hapus koneksi {{$d.DB.Name}}? Riwayat migration database ini juga akan terhapus dari platform.">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <button class="danger">Hapus koneksi</button>
+  </form>
+</section>
+{{end}}
+{{end}}

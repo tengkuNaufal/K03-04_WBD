@@ -1,0 +1,4 @@
+.git
+*.pdf
+coverage.out
+.env

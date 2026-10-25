@@ -1,0 +1,28 @@
+{{define "content"}}
+<h1>Users</h1>
+<section class="card">
+  <h2>Tambah user</h2>
+  <form method="post" action="/admin/users" class="row wrap">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <label>Username <input name="username" required pattern="[a-z0-9][a-z0-9_.\-]{2,31}" title="3-32 karakter: huruf kecil, angka, titik, garis bawah, strip"></label>
+    <label>Password <input type="password" name="password" minlength="8" autocomplete="new-password" required></label>
+    <label class="check"><input type="checkbox" name="is_admin" value="1"> Platform Admin</label>
+    <button class="primary">Tambah</button>
+  </form>
+</section>
+<section class="card">
+  <table>
+    <thead><tr><th>Username</th><th>Peran</th><th>Status</th><th>Dibuat</th></tr></thead>
+    <tbody>
+    {{range .Data}}
+      <tr>
+        <td><a href="/admin/users/{{.ID}}">{{.Username}}</a></td>
+        <td>{{if .IsAdmin}}<span class="badge">Platform Admin</span>{{else}}User{{end}}</td>
+        <td>{{if .IsActive}}<span class="status ok">aktif</span>{{else}}<span class="status bad">nonaktif</span>{{end}}</td>
+        <td>{{fmtTime .CreatedAt}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}
