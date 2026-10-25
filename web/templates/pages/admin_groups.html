@@ -1,0 +1,23 @@
+{{define "content"}}
+<h1>Groups</h1>
+<section class="card">
+  <h2>Buat group</h2>
+  <form method="post" action="/admin/groups" class="row wrap">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <label>Nama <input name="name" maxlength="64" required></label>
+    <button class="primary">Buat</button>
+  </form>
+</section>
+<section class="card">
+  {{if .Data}}
+  <table>
+    <thead><tr><th>Nama</th><th class="num">Anggota</th></tr></thead>
+    <tbody>
+    {{range .Data}}
+      <tr><td><a href="/admin/groups/{{.ID}}">{{.Name}}</a></td><td class="num">{{.MemberCount}}</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}<p class="muted">Belum ada group.</p>{{end}}
+</section>
+{{end}}
