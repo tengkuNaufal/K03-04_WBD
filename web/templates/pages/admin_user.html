@@ -1,0 +1,36 @@
+{{define "content"}}
+{{$u := .Data}}
+<p class="crumb"><a href="/admin/users">Users</a> /</p>
+<h1>{{$u.Username}}</h1>
+
+<section class="card">
+  <h2>Peran &amp; status</h2>
+  <form method="post" action="/admin/users/{{$u.ID}}" class="row wrap">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <label class="check"><input type="checkbox" name="is_admin" value="1" {{if $u.IsAdmin}}checked{{end}}> Platform Admin</label>
+    <label class="check"><input type="checkbox" name="is_active" value="1" {{if $u.IsActive}}checked{{end}}> Aktif</label>
+    <button>Simpan</button>
+  </form>
+  <p class="muted small">Menonaktifkan user atau mencabut hak admin langsung mengakhiri semua session user tersebut.</p>
+</section>
+
+<section class="card">
+  <h2>Reset password</h2>
+  <form method="post" action="/admin/users/{{$u.ID}}/password" class="row">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <input type="password" name="password" minlength="8" autocomplete="new-password" placeholder="Password baru" required>
+    <button>Ganti password</button>
+  </form>
+  <p class="muted small">Semua session user diakhiri setelah password diganti.</p>
+</section>
+
+{{if ne $u.ID .User.UserID}}
+<section class="card">
+  <h2>Hapus user</h2>
+  <form method="post" action="/admin/users/{{$u.ID}}/delete" data-confirm="Hapus user {{$u.Username}}?">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <button class="danger">Hapus user</button>
+  </form>
+</section>
+{{end}}
+{{end}}
