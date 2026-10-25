@@ -27,11 +27,32 @@ Mencoba database contoh `shop`:
 
 Tanpa container app (untuk development):
 
+Versi linux
 ```bash
 docker compose up -d platform-db sample-db
 export DATABASE_URL="postgres://dbmp:dbmp@localhost:15432/dbmp?sslmode=disable"
 export APP_SECRET_KEY="ganti-dengan-rahasia-panjang"
 export ADMIN_USERNAME=admin ADMIN_PASSWORD=admin12345
+go run ./cmd/server
+```
+
+Versi Powershell
+```bash
+docker compose up -d platform-db sample-db
+$env:DATABASE_URL="postgres://dbmp:dbmp@localhost:15432/dbmp?sslmode=disable"
+$env:APP_SECRET_KEY="ganti-dengan-rahasia-panjang"
+$env:ADMIN_USERNAME="admin"
+$env:ADMIN_PASSWORD="admin12345"
+go run ./cmd/server
+```
+
+Versi CMD
+```bash
+docker compose up -d platform-db sample-db
+set DATABASE_URL=postgres://dbmp:dbmp@localhost:15432/dbmp?sslmode=disable
+set APP_SECRET_KEY=ganti-dengan-rahasia-panjang
+set ADMIN_USERNAME=admin
+set ADMIN_PASSWORD=admin12345
 go run ./cmd/server
 ```
 
