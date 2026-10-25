@@ -1,0 +1,6 @@
+/dbmp
+/dbmp.exe
+/bin/
+*.test
+coverage.out
+.env
