@@ -7,7 +7,6 @@ import (
 	"dbmp/internal/model"
 )
 
-// Validate checks a migration before it is saved or executed.
 func Validate(name, sql string) error {
 	stmts := Split(sql)
 	switch {
@@ -22,16 +21,11 @@ func Validate(name, sql string) error {
 	return nil
 }
 
-// Statement is one SQL statement of a migration script.
 type Statement struct {
-	Text    string // statement without the trailing semicolon
-	Keyword string // first keyword, upper case (SELECT, CREATE, ...)
+	Text    string 
+	Keyword string 
 }
 
-// Split cuts a script into statements. It understands the PostgreSQL lexical
-// elements that may contain a semicolon: 'strings' (including E” escapes),
-// "identifiers", $tag$ dollar quoted bodies $tag$, -- line comments and
-// nested /* block comments */.
 func Split(script string) []Statement {
 	var out []Statement
 	start := 0
@@ -108,7 +102,7 @@ func skipBlockComment(s string, i int) int {
 
 func skipQuoted(s string, i int, q byte, backslashEscapes bool) int {
 	n := len(s)
-	i++ // opening quote
+	i++ 
 	for i < n {
 		switch s[i] {
 		case '\\':
@@ -117,7 +111,7 @@ func skipQuoted(s string, i int, q byte, backslashEscapes bool) int {
 				continue
 			}
 		case q:
-			if i+1 < n && s[i+1] == q { // doubled quote
+			if i+1 < n && s[i+1] == q { 
 				i += 2
 				continue
 			}
@@ -128,9 +122,8 @@ func skipQuoted(s string, i int, q byte, backslashEscapes bool) int {
 	return n
 }
 
-// dollarTag returns "$tag$" when position i starts a dollar quote.
 func dollarTag(s string, i int) (string, bool) {
-	if i > 0 && isIdentChar(s[i-1]) { // e.g. a parameter like foo$1 is not a quote
+	if i > 0 && isIdentChar(s[i-1]) { 
 		return "", false
 	}
 	j := i + 1
@@ -147,7 +140,6 @@ func dollarTag(s string, i int) (string, bool) {
 	return s[i : j+1], true
 }
 
-// firstKeyword returns the first word of a statement, skipping comments.
 func firstKeyword(s string) string {
 	i := 0
 	n := len(s)
@@ -162,7 +154,7 @@ func firstKeyword(s string) string {
 		case s[i] == '/' && i+1 < n && s[i+1] == '*':
 			i = skipBlockComment(s, i)
 		case s[i] == '(':
-			i++ // (SELECT ...) UNION ...
+			i++ 
 		default:
 			j := i
 			for j < n && isIdentChar(s[j]) {
@@ -179,8 +171,6 @@ var transactionKeywords = map[string]bool{
 	"ROLLBACK": true, "ABORT": true, "PREPARE": true,
 }
 
-// TransactionControl returns the statements that would interfere with the
-// transaction the platform wraps around every migration.
 func TransactionControl(stmts []Statement) []Statement {
 	var bad []Statement
 	for _, s := range stmts {
@@ -188,7 +178,7 @@ func TransactionControl(stmts []Statement) []Statement {
 			continue
 		}
 		if s.Keyword == "PREPARE" && !strings.Contains(strings.ToUpper(s.Text), "TRANSACTION") {
-			continue // PREPARE of a prepared statement is fine
+			continue 
 		}
 		bad = append(bad, s)
 	}
@@ -200,5 +190,4 @@ var explainable = map[string]bool{
 	"WITH": true, "MERGE": true, "VALUES": true, "TABLE": true,
 }
 
-// Explainable reports whether PostgreSQL accepts EXPLAIN for the statement.
 func (s Statement) Explainable() bool { return explainable[s.Keyword] }
