@@ -1,0 +1,20 @@
+{{define "content"}}
+{{template "dbnav" .Data}}
+<section class="card">
+  {{if .Data.Tables}}
+  <table>
+    <thead><tr><th>Schema</th><th>Nama</th><th>Jenis</th><th class="num">Perkiraan baris</th></tr></thead>
+    <tbody>
+    {{range .Data.Tables}}
+      <tr>
+        <td class="mono">{{.Schema}}</td>
+        <td><a class="mono" href="/db/{{$.Data.DB.ID}}/tables/{{urlPath .Schema}}/{{urlPath .Name}}">{{.Name}}</a></td>
+        <td>{{.Kind}}</td>
+        <td class="num">{{.EstimatedRows}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}<p class="muted">Database ini belum memiliki table atau view.</p>{{end}}
+</section>
+{{end}}

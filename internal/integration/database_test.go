@@ -75,6 +75,7 @@ func TestStoredPasswordIsEncrypted(t *testing.T) {
 	if err != nil || string(plain) != pw {
 		t.Fatalf("stored password does not decrypt to the original: %v", err)
 	}
+	// The edit form never pre-fills the password field.
 	page := w.admin.get(fmt.Sprintf("/admin/databases/%d", w.dbID))
 	if !strings.Contains(page.body, `<input type="password" name="password" autocomplete="new-password" placeholder=`) {
 		t.Fatal("password field must be empty on the edit form")
@@ -120,6 +121,7 @@ func TestDatabaseViewer(t *testing.T) {
 	}
 
 	expectStatus(t, "unknown table", w.viewer.get(fmt.Sprintf("/db/%d/tables/public/nope", w.dbID)), http.StatusNotFound)
+	// Identifiers are quoted, so this is just an unknown table, not SQL.
 	expectStatus(t, "injection attempt", w.viewer.get(fmt.Sprintf("/db/%d/tables/public/%s?tab=data", w.dbID, url.PathEscape(`customers"; DROP TABLE customers; --`))), http.StatusNotFound)
 	var n int
 	if err := w.target.QueryRow(context.Background(), "SELECT count(*) FROM customers").Scan(&n); err != nil || n != 75 {
@@ -137,6 +139,7 @@ func TestUserWithoutGroupAccessIsDenied(t *testing.T) {
 	} {
 		expectStatus(t, p, w.outsider.get(p), http.StatusForbidden)
 	}
+	// Platform Admin is not a database access level.
 	expectStatus(t, "admin without group", w.admin.get(fmt.Sprintf("/db/%d", w.dbID)), http.StatusForbidden)
 }
 
@@ -146,6 +149,8 @@ func TestAccessRemovalAppliesImmediately(t *testing.T) {
 	expectStatus(t, "before", w.viewer.get(path), http.StatusOK)
 	r := w.admin.post(fmt.Sprintf("/admin/groups/%d/members/%d/remove", w.viewGrp, w.viewerID), nil)
 	expectStatus(t, "remove member", r, http.StatusSeeOther)
+	// The session is ended in the backend; after logging in again the
+	// database is still out of reach.
 	r = w.viewer.get(path)
 	if r.status != http.StatusSeeOther || !strings.HasPrefix(r.location, "/login") {
 		t.Fatalf("session not revoked: %d", r.status)
@@ -153,6 +158,7 @@ func TestAccessRemovalAppliesImmediately(t *testing.T) {
 	w.viewer.mustLogin("vera")
 	expectStatus(t, "after", w.viewer.get(path), http.StatusForbidden)
 
+	// Lowering a group's level also ends the members' sessions.
 	r = w.admin.post(fmt.Sprintf("/admin/groups/%d/grants", w.editGrp), url.Values{"database_id": {fmt.Sprint(w.dbID)}, "level": {"view"}})
 	expectStatus(t, "downgrade", r, http.StatusSeeOther)
 	if r := w.editor.get(path); r.status != http.StatusSeeOther {
@@ -163,6 +169,7 @@ func TestAccessRemovalAppliesImmediately(t *testing.T) {
 func TestEffectiveAccessAcrossGroups(t *testing.T) {
 	w := newWorld(t)
 	ctx := context.Background()
+	// vera joins the editors group too: View Only + View + Edit = View + Edit.
 	if err := w.store.AddMember(ctx, w.editGrp, w.viewerID); err != nil {
 		t.Fatal(err)
 	}
@@ -181,20 +188,25 @@ func TestMigrationLifecycle(t *testing.T) {
 	ctx := context.Background()
 	base := fmt.Sprintf("/db/%d/migrations", w.dbID)
 
+	// View Only users cannot create migrations, even with a direct request.
 	expectStatus(t, "viewer new form", w.viewer.get(base+"/new"), http.StatusForbidden)
 	expectStatus(t, "viewer create", w.viewer.post(base, url.Values{"name": {"x"}, "sql": {"SELECT 1"}}), http.StatusForbidden)
 
+	// Editor creates a draft.
 	r := w.editor.post(base, url.Values{"name": {"add email"}, "sql": {"ALTER TABLE customers ADD COLUMN email text;\nCREATE INDEX customers_email_idx ON customers(email);"}})
 	expectStatus(t, "create", r, http.StatusSeeOther)
 	good := idFromLocation(t, r.location)
 
+	// Manual transaction control is rejected.
 	r = w.editor.post(base, url.Values{"name": {"tx"}, "sql": {"BEGIN; SELECT 1; COMMIT;"}})
 	expectStatus(t, "manual tx", r, http.StatusBadRequest)
 
+	// Viewer can see but not run it.
 	expectStatus(t, "viewer detail", w.viewer.get(fmt.Sprintf("%s/%d", base, good)), http.StatusOK)
 	expectStatus(t, "viewer execute", w.viewer.post(fmt.Sprintf("%s/%d/execute", base, good), nil), http.StatusForbidden)
 	expectStatus(t, "viewer edit", w.viewer.post(fmt.Sprintf("%s/%d", base, good), url.Values{"name": {"x"}, "sql": {"DROP TABLE customers"}}), http.StatusForbidden)
 
+	// Execute: committed as version 1.
 	expectStatus(t, "execute", w.editor.post(fmt.Sprintf("%s/%d/execute", base, good), nil), http.StatusSeeOther)
 	var exists bool
 	_ = w.target.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='customers' AND column_name='email')`).Scan(&exists)
@@ -206,6 +218,7 @@ func TestMigrationLifecycle(t *testing.T) {
 		t.Fatalf("migration record: %+v", m)
 	}
 
+	// Applied migrations are immutable.
 	r = w.editor.post(fmt.Sprintf("%s/%d", base, good), url.Values{"name": {"changed"}, "sql": {"SELECT 1"}})
 	expectStatus(t, "edit applied", r, http.StatusBadRequest)
 	w.editor.post(fmt.Sprintf("%s/%d/execute", base, good), nil)
@@ -213,6 +226,7 @@ func TestMigrationLifecycle(t *testing.T) {
 		t.Fatal("applied migration ran twice")
 	}
 
+	// A failing migration is rolled back completely.
 	r = w.editor.post(base, url.Values{"name": {"broken"}, "sql": {"CREATE TABLE half_done (id int);\nINSERT INTO customers (name) VALUES ('x');\nINSERT INTO missing_table VALUES (1);"}})
 	bad := idFromLocation(t, r.location)
 	expectStatus(t, "execute broken", w.editor.post(fmt.Sprintf("%s/%d/execute", base, bad), nil), http.StatusSeeOther)
@@ -227,6 +241,7 @@ func TestMigrationLifecycle(t *testing.T) {
 		t.Fatalf("failed migration record: %+v", m)
 	}
 
+	// Fix it and run again: becomes version 2.
 	expectStatus(t, "fix", w.editor.post(fmt.Sprintf("%s/%d", base, bad), url.Values{"name": {"fixed"}, "sql": {"CREATE TABLE half_done (id int);"}}), http.StatusSeeOther)
 	expectStatus(t, "execute fixed", w.editor.post(fmt.Sprintf("%s/%d/execute", base, bad), nil), http.StatusSeeOther)
 	m, _ = w.store.GetMigration(ctx, w.dbID, bad)
@@ -234,6 +249,7 @@ func TestMigrationLifecycle(t *testing.T) {
 		t.Fatalf("fixed migration: %+v", m)
 	}
 
+	// History page shows the linear history.
 	r = w.viewer.get(base)
 	expectStatus(t, "history", r, http.StatusOK)
 	for _, s := range []string{"v1", "v2", "add email", "fixed", "eddie"} {
@@ -242,6 +258,7 @@ func TestMigrationLifecycle(t *testing.T) {
 		}
 	}
 
+	// Applied migrations cannot be deleted; drafts can.
 	expectStatus(t, "delete applied", w.editor.post(fmt.Sprintf("%s/%d/delete", base, good), nil), http.StatusSeeOther)
 	if _, err := w.store.GetMigration(ctx, w.dbID, good); err != nil {
 		t.Fatal("applied migration deleted")
@@ -329,6 +346,7 @@ func TestUnreachableDatabase(t *testing.T) {
 		t.Fatal("unclear or leaky error message")
 	}
 
+	// Admin form rejects a connection that does not work.
 	form := w.targetForm("bad-creds")
 	form.Set("password", "definitely-wrong")
 	form.Set("port", "1")

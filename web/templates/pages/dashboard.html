@@ -1,0 +1,20 @@
+{{define "content"}}
+<h1>Database Anda</h1>
+{{if .Data}}
+<div class="grid">
+  {{range .Data}}
+  <a class="dbcard" href="/db/{{.Database.ID}}">
+    <strong>{{.Database.Name}}</strong>
+    <span class="mono muted">{{.Database.Host}}:{{.Database.Port}}/{{.Database.DBName}}</span>
+    <span class="lvl lvl-{{.Level}}">{{.Level.Label}}</span>
+  </a>
+  {{end}}
+</div>
+{{else}}
+<div class="card empty">
+  <p>Anda belum memiliki akses ke database mana pun.</p>
+  <p class="muted">Akses database diberikan melalui group. Minta Platform Admin menambahkan Anda ke group yang memiliki akses.</p>
+  {{if .User.IsAdmin}}<p class="muted">Sebagai Platform Admin, Anda tetap perlu menjadi anggota group untuk melihat isi database.</p>{{end}}
+</div>
+{{end}}
+{{end}}
