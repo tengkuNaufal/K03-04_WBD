@@ -1,10 +1,10 @@
+// Package web is the JSON API used by the SPA, plus the SPA files.
 package web
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/subtle"
-	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"log/slog"
@@ -14,22 +14,25 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 
 	"dbmp/internal/auth"
 	"dbmp/internal/authz"
 	"dbmp/internal/model"
+	"dbmp/internal/obs"
 	"dbmp/internal/secret"
 	"dbmp/internal/session"
 	"dbmp/internal/store"
 	"dbmp/internal/targetdb"
+	"dbmp/internal/workflow"
 )
 
 const (
-	sessionCookie   = "dbmp_session"
-	loginCSRFCookie = "dbmp_login_csrf"
-	flashCookie     = "dbmp_flash"
-	csrfField       = "csrf_token"
+	sessionCookie = "dbmp_session"
+	csrfHeader    = "X-CSRF-Token"
 )
 
 type Server struct {
@@ -39,20 +42,13 @@ type Server struct {
 	Policy       *authz.Policy
 	Targets      *targetdb.Manager
 	Box          *secret.Box
-	Assets       fs.FS
-	CookieSecure bool // set the Secure flag on cookies (behind HTTPS)
+	Assets       fs.FS // built SPA (index.html, assets/)
+	CookieSecure bool  // set the Secure flag on cookies (behind HTTPS)
 
-	tpl     *Renderer
 	handler http.Handler
 }
 
-// Init parses the templates and builds the routes.
 func (s *Server) Init() error {
-	tpl, err := NewRenderer(s.Assets)
-	if err != nil {
-		return err
-	}
-	s.tpl = tpl
 	s.handler = s.routes()
 	return nil
 }
@@ -61,50 +57,70 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.handler.S
 
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
-	static, _ := fs.Sub(s.Assets, "static")
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
+	h := func(pattern string, fn http.HandlerFunc) {
+		mux.Handle(pattern, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if info := infoOf(r); info != nil {
+				info.route = pattern
+			}
+			trace.SpanFromContext(r.Context()).SetName(pattern)
+			fn(w, r)
+		}))
+	}
 
-	mux.HandleFunc("GET /login", s.loginForm)
-	mux.HandleFunc("POST /login", s.login)
-	mux.HandleFunc("POST /logout", s.authed(s.logout))
-	mux.HandleFunc("GET /{$}", s.authed(s.dashboard))
+	h("GET /api/session", s.authed(s.sessionInfo))
+	h("POST /api/login", s.login)
+	h("POST /api/logout", s.authed(s.logout))
+	h("GET /api/databases", s.authed(s.databases))
+	h("GET /api/reviews", s.authed(s.reviews))
 
-	mux.HandleFunc("GET /db/{dbID}", s.authed(s.dbTables))
-	mux.HandleFunc("GET /db/{dbID}/tables/{schema}/{table}", s.authed(s.dbTable))
+	h("GET /api/db/{dbID}", s.authed(s.dbInfo))
+	h("GET /api/db/{dbID}/tables", s.authed(s.dbTables))
+	h("GET /api/db/{dbID}/tables/{schema}/{table}", s.authed(s.dbTable))
+	h("GET /api/db/{dbID}/tables/{schema}/{table}/rows", s.authed(s.dbRows))
 
-	mux.HandleFunc("GET /db/{dbID}/migrations", s.authed(s.migrationList))
-	mux.HandleFunc("GET /db/{dbID}/migrations/new", s.authed(s.migrationNew))
-	mux.HandleFunc("POST /db/{dbID}/migrations", s.authed(s.migrationCreate))
-	mux.HandleFunc("GET /db/{dbID}/migrations/{mID}", s.authed(s.migrationDetail))
-	mux.HandleFunc("POST /db/{dbID}/migrations/{mID}", s.authed(s.migrationUpdate))
-	mux.HandleFunc("POST /db/{dbID}/migrations/{mID}/execute", s.authed(s.migrationExecute))
-	mux.HandleFunc("POST /db/{dbID}/migrations/{mID}/explain", s.authed(s.migrationExplain))
-	mux.HandleFunc("POST /db/{dbID}/migrations/{mID}/delete", s.authed(s.migrationDelete))
+	h("GET /api/db/{dbID}/migrations", s.authed(s.migrationList))
+	h("POST /api/db/{dbID}/migrations", s.authed(s.migrationCreate))
+	h("GET /api/db/{dbID}/migrations/{mID}", s.authed(s.migrationDetail))
+	h("PUT /api/db/{dbID}/migrations/{mID}", s.authed(s.migrationUpdate))
+	h("DELETE /api/db/{dbID}/migrations/{mID}", s.authed(s.migrationDelete))
+	h("POST /api/db/{dbID}/migrations/{mID}/validate", s.authed(s.migrationValidate))
+	h("POST /api/db/{dbID}/migrations/{mID}/requests", s.authed(s.requestSubmit))
 
-	mux.HandleFunc("GET /admin/users", s.admin(s.adminUsers))
-	mux.HandleFunc("POST /admin/users", s.admin(s.adminUserCreate))
-	mux.HandleFunc("GET /admin/users/{id}", s.admin(s.adminUser))
-	mux.HandleFunc("POST /admin/users/{id}", s.admin(s.adminUserUpdate))
-	mux.HandleFunc("POST /admin/users/{id}/password", s.admin(s.adminUserPassword))
-	mux.HandleFunc("POST /admin/users/{id}/delete", s.admin(s.adminUserDelete))
+	h("GET /api/db/{dbID}/requests", s.authed(s.requestList))
+	h("GET /api/db/{dbID}/requests/{rID}", s.authed(s.requestDetail))
+	h("POST /api/db/{dbID}/requests/{rID}/approve", s.authed(s.requestApprove))
+	h("POST /api/db/{dbID}/requests/{rID}/reject", s.authed(s.requestReject))
+	h("POST /api/db/{dbID}/requests/{rID}/cancel", s.authed(s.requestCancel))
+	h("POST /api/db/{dbID}/requests/{rID}/execute", s.authed(s.requestExecute))
+	h("GET /api/db/{dbID}/jobs/{jobID}", s.authed(s.jobDetail))
+	h("GET /api/db/{dbID}/history", s.authed(s.history))
 
-	mux.HandleFunc("GET /admin/groups", s.admin(s.adminGroups))
-	mux.HandleFunc("POST /admin/groups", s.admin(s.adminGroupCreate))
-	mux.HandleFunc("GET /admin/groups/{id}", s.admin(s.adminGroup))
-	mux.HandleFunc("POST /admin/groups/{id}/delete", s.admin(s.adminGroupDelete))
-	mux.HandleFunc("POST /admin/groups/{id}/members", s.admin(s.adminGroupAddMember))
-	mux.HandleFunc("POST /admin/groups/{id}/members/{userID}/remove", s.admin(s.adminGroupRemoveMember))
-	mux.HandleFunc("POST /admin/groups/{id}/grants", s.admin(s.adminGroupSetGrant))
-	mux.HandleFunc("POST /admin/groups/{id}/grants/{dbID}/remove", s.admin(s.adminGroupRemoveGrant))
+	h("GET /api/admin/users", s.admin(s.adminUsers))
+	h("POST /api/admin/users", s.admin(s.adminUserCreate))
+	h("GET /api/admin/users/{id}", s.admin(s.adminUser))
+	h("PUT /api/admin/users/{id}", s.admin(s.adminUserUpdate))
+	h("POST /api/admin/users/{id}/password", s.admin(s.adminUserPassword))
+	h("DELETE /api/admin/users/{id}", s.admin(s.adminUserDelete))
 
-	mux.HandleFunc("GET /admin/databases", s.admin(s.adminDatabases))
-	mux.HandleFunc("GET /admin/databases/new", s.admin(s.adminDatabaseNew))
-	mux.HandleFunc("POST /admin/databases", s.admin(s.adminDatabaseCreate))
-	mux.HandleFunc("GET /admin/databases/{id}", s.admin(s.adminDatabase))
-	mux.HandleFunc("POST /admin/databases/{id}", s.admin(s.adminDatabaseUpdate))
-	mux.HandleFunc("POST /admin/databases/{id}/delete", s.admin(s.adminDatabaseDelete))
+	h("GET /api/admin/groups", s.admin(s.adminGroups))
+	h("POST /api/admin/groups", s.admin(s.adminGroupCreate))
+	h("GET /api/admin/groups/{id}", s.admin(s.adminGroup))
+	h("DELETE /api/admin/groups/{id}", s.admin(s.adminGroupDelete))
+	h("PUT /api/admin/groups/{id}/leader", s.admin(s.adminGroupSetLeader))
+	h("POST /api/admin/groups/{id}/members", s.admin(s.adminGroupAddMember))
+	h("DELETE /api/admin/groups/{id}/members/{userID}", s.admin(s.adminGroupRemoveMember))
+	h("PUT /api/admin/groups/{id}/grants", s.admin(s.adminGroupSetGrant))
+	h("DELETE /api/admin/groups/{id}/grants/{dbID}", s.admin(s.adminGroupRemoveGrant))
 
-	return securityHeaders(s.loadSession(mux))
+	h("GET /api/admin/databases", s.admin(s.adminDatabases))
+	h("POST /api/admin/databases", s.admin(s.adminDatabaseCreate))
+	h("GET /api/admin/databases/{id}", s.admin(s.adminDatabase))
+	h("PUT /api/admin/databases/{id}", s.admin(s.adminDatabaseUpdate))
+	h("DELETE /api/admin/databases/{id}", s.admin(s.adminDatabaseDelete))
+
+	h("GET /", s.spa)
+
+	return observe(securityHeaders(s.loadSession(mux)))
 }
 
 
@@ -114,7 +130,16 @@ const (
 	ctxPrincipal ctxKey = iota
 	ctxSession
 	ctxToken
+	ctxInfo
 )
+
+// reqInfo is filled by inner handlers and read by the observe middleware.
+type reqInfo struct{ route, actor string }
+
+func infoOf(r *http.Request) *reqInfo {
+	i, _ := r.Context().Value(ctxInfo).(*reqInfo)
+	return i
+}
 
 func principal(r *http.Request) *authz.Principal {
 	p, _ := r.Context().Value(ctxPrincipal).(*authz.Principal)
@@ -126,13 +151,49 @@ func currentSession(r *http.Request) *session.Session {
 	return s
 }
 
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	s.status = code
+	s.ResponseWriter.WriteHeader(code)
+}
+
+// observe starts the request span and writes one access log line per API request.
+func observe(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+		ctx, span := obs.Tracer.Start(ctx, r.Method+" "+r.URL.Path, trace.WithSpanKind(trace.SpanKindServer),
+			trace.WithAttributes(attribute.String("http.method", r.Method)))
+		defer span.End()
+		info := &reqInfo{route: "unmatched"}
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		start := time.Now()
+		next.ServeHTTP(rec, r.WithContext(context.WithValue(ctx, ctxInfo, info)))
+		took := time.Since(start)
+
+		span.SetAttributes(attribute.String("http.route", info.route), attribute.Int("http.status_code", rec.status))
+		level := slog.LevelInfo
+		if !strings.HasPrefix(r.URL.Path, "/api/") {
+			level = slog.LevelDebug
+		} else if rec.status >= 500 {
+			level = slog.LevelError
+		}
+		slog.Log(ctx, level, "http request", "event", "http.request", "method", r.Method, "route", info.route,
+			"status", rec.status, "duration_ms", took.Milliseconds(), "actor", info.actor)
+	})
+}
+
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'; form-action 'self'")
+		h.Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "same-origin")
-		if !strings.HasPrefix(r.URL.Path, "/static/") {
+		if !strings.HasPrefix(r.URL.Path, "/assets/") {
 			h.Set("Cache-Control", "no-store")
 		}
 		next.ServeHTTP(w, r)
@@ -143,23 +204,26 @@ func (s *Server) loadSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
 		c, err := r.Cookie(sessionCookie)
-		if err != nil || strings.HasPrefix(r.URL.Path, "/static/") {
+		if err != nil || !strings.HasPrefix(r.URL.Path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}
 		p, sess, err := s.Auth.Authenticate(r.Context(), c.Value)
 		if err != nil {
 			if !errors.Is(err, session.ErrInvalid) {
-				slog.Error("session validation failed", "error", err)
+				slog.ErrorContext(r.Context(), "session validation failed", "event", "session.error", "error", err)
 			}
-			s.clearCookie(w, sessionCookie)
+			s.clearCookie(w)
 			next.ServeHTTP(w, r)
 			return
 		}
 		token := c.Value
-		if sess.NewToken != "" {
+		if sess.NewToken != "" { // rotated: same cookie name, new value
 			token = sess.NewToken
 			s.setSessionCookie(w, token, sess.AbsoluteExpiresAt)
+		}
+		if info := infoOf(r); info != nil {
+			info.actor = p.Username
 		}
 		ctx := context.WithValue(r.Context(), ctxPrincipal, p)
 		ctx = context.WithValue(ctx, ctxSession, sess)
@@ -168,18 +232,16 @@ func (s *Server) loadSession(next http.Handler) http.Handler {
 	})
 }
 
+// authed requires a session; state-changing requests also need the session's
+// CSRF token in the X-CSRF-Token header and a same-origin request.
 func (s *Server) authed(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if principal(r) == nil {
-			if r.Method == http.MethodGet {
-				http.Redirect(w, r, "/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusSeeOther)
-			} else {
-				http.Error(w, "Sesi tidak valid atau telah berakhir. Silakan login kembali.", http.StatusUnauthorized)
-			}
+			writeError(w, http.StatusUnauthorized, "Sesi tidak valid atau telah berakhir. Silakan login kembali.")
 			return
 		}
-		if r.Method == http.MethodPost && (!sameOrigin(r) || !validCSRF(r, currentSession(r).CSRFToken)) {
-			s.renderError(w, r, http.StatusForbidden, "Permintaan ditolak: token CSRF tidak valid. Muat ulang halaman lalu coba lagi.")
+		if r.Method != http.MethodGet && (!sameOrigin(r) || !validCSRF(r, currentSession(r).CSRFToken)) {
+			writeError(w, http.StatusForbidden, "Permintaan ditolak: token CSRF tidak valid. Muat ulang halaman lalu coba lagi.")
 			return
 		}
 		h(w, r)
@@ -197,11 +259,15 @@ func (s *Server) admin(h http.HandlerFunc) http.HandlerFunc {
 }
 
 func validCSRF(r *http.Request, expected string) bool {
-	got := r.PostFormValue(csrfField)
+	got := r.Header.Get(csrfHeader)
 	return got != "" && expected != "" && subtle.ConstantTimeCompare([]byte(got), []byte(expected)) == 1
 }
 
+// sameOrigin rejects cross-site browser requests (Origin or Fetch Metadata).
 func sameOrigin(r *http.Request) bool {
+	if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+		return false
+	}
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		return true
@@ -210,116 +276,74 @@ func sameOrigin(r *http.Request) bool {
 	return err == nil && origin != "null" && strings.EqualFold(u.Host, r.Host)
 }
 
-
-func (s *Server) cookie(name, value string, maxAge int, sameSite http.SameSite) *http.Cookie {
-	return &http.Cookie{Name: name, Value: value, Path: "/", MaxAge: maxAge,
-		HttpOnly: true, Secure: s.CookieSecure, SameSite: sameSite}
-}
-
 func (s *Server) setSessionCookie(w http.ResponseWriter, token string, expires time.Time) {
-	http.SetCookie(w, s.cookie(sessionCookie, token, int(time.Until(expires).Seconds()), http.SameSiteLaxMode))
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: token, Path: "/", MaxAge: int(time.Until(expires).Seconds()),
+		HttpOnly: true, Secure: s.CookieSecure, SameSite: http.SameSiteLaxMode})
 }
 
-func (s *Server) clearCookie(w http.ResponseWriter, name string) {
-	http.SetCookie(w, s.cookie(name, "", -1, http.SameSiteLaxMode))
+func (s *Server) clearCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1,
+		HttpOnly: true, Secure: s.CookieSecure, SameSite: http.SameSiteLaxMode})
 }
 
-func (s *Server) flash(w http.ResponseWriter, kind, msg string) {
-	http.SetCookie(w, s.cookie(flashCookie, url.QueryEscape(kind+"|"+msg), 60, http.SameSiteLaxMode))
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
-func randomToken() string {
-	b := make([]byte, 32)
-	_, _ = rand.Read(b)
-	return base64.RawURLEncoding.EncodeToString(b)
+func writeError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-func (s *Server) page(w http.ResponseWriter, r *http.Request, title string, data any) Page {
-	p := Page{Title: title, User: principal(r), Data: data}
-	if sess := currentSession(r); sess != nil {
-		p.CSRF = sess.CSRFToken
+func writeOK(w http.ResponseWriter, msg string) {
+	writeJSON(w, http.StatusOK, map[string]string{"message": msg})
+}
+
+// decode reads a JSON body, it only accepts application/json, which a
+// cross-site form cannot send without a CORS preflight.
+func decode(r *http.Request, v any) error {
+	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		return model.Invalid("Content-Type harus application/json.")
 	}
-	if c, err := r.Cookie(flashCookie); err == nil {
-		s.clearCookie(w, flashCookie)
-		v, _ := url.QueryUnescape(c.Value)
-		p.FlashKind, p.Flash, _ = strings.Cut(v, "|")
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		return model.Invalid("Body JSON tidak valid.")
 	}
-	return p
+	return nil
 }
 
-func (s *Server) render(w http.ResponseWriter, status int, name string, p Page) {
-	if err := s.tpl.Render(w, status, name, p); err != nil {
-		slog.Error("render failed", "page", name, "error", err)
-	}
-}
-
-func (s *Server) renderError(w http.ResponseWriter, r *http.Request, status int, msg string) {
-	p := s.page(w, r, http.StatusText(status), nil)
-	p.Error = msg
-	s.render(w, status, "error", p)
-}
-
+// fail maps an error to a status code and a message that is safe to show.
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	var ve *model.ValidationError
+	var he *workflow.HeldError
 	switch {
 	case errors.Is(err, authz.ErrForbidden):
-		s.renderError(w, r, http.StatusForbidden, "Akses ditolak: Anda tidak memiliki hak akses untuk tindakan ini.")
-	case errors.Is(err, model.ErrNotFound):
-		s.renderError(w, r, http.StatusNotFound, "Data yang diminta tidak ditemukan.")
-	case errors.As(err, &ve):
-		s.renderError(w, r, http.StatusBadRequest, ve.Msg)
-	case targetdb.IsConnError(err):
-		s.renderError(w, r, http.StatusBadGateway, "Tidak dapat terhubung ke database target. Periksa konfigurasi koneksi atau hubungi Platform Admin. Detail: "+err.Error())
-	case pgCode(err) == "42501":
-		s.renderError(w, r, http.StatusForbidden, "Database target menolak perintah karena role koneksi tidak memiliki hak: "+targetdb.PgErrorMessage(err))
-	case pgCode(err) != "":
-		s.renderError(w, r, http.StatusBadGateway, "Database target mengembalikan error: "+targetdb.PgErrorMessage(err))
-	case errors.Is(err, context.DeadlineExceeded):
-		s.renderError(w, r, http.StatusGatewayTimeout, "Permintaan ke database melebihi batas waktu.")
-	default:
-		slog.Error("request failed", "path", r.URL.Path, "error", err)
-		s.renderError(w, r, http.StatusInternalServerError, "Terjadi kesalahan pada server.")
-	}
-}
-
-func (s *Server) done(w http.ResponseWriter, r *http.Request, err error, okMsg, target string) {
-	var ve *model.ValidationError
-	switch {
-	case err == nil:
-		s.flash(w, "ok", okMsg)
-	case errors.As(err, &ve):
-		s.flash(w, "bad", ve.Msg)
+		writeError(w, http.StatusForbidden, "Akses ditolak: Anda tidak memiliki hak akses untuk tindakan ini.")
+	case errors.Is(err, authz.ErrUnauthenticated):
+		writeError(w, http.StatusUnauthorized, "Silakan login terlebih dahulu.")
+	case errors.Is(err, model.ErrNotFound), targetdb.PgCode(err) == "42P01":
+		writeError(w, http.StatusNotFound, "Data yang diminta tidak ditemukan.")
 	case errors.Is(err, model.ErrConflict):
-		s.flash(w, "bad", "Nama sudah dipakai.")
+		writeError(w, http.StatusConflict, "Nama sudah dipakai.")
+	case errors.As(err, &ve):
+		writeError(w, http.StatusBadRequest, ve.Msg)
+	case errors.As(err, &he):
+		writeError(w, http.StatusConflict, he.Msg)
+	case targetdb.IsConnError(err):
+		writeError(w, http.StatusBadGateway, "Tidak dapat terhubung ke database target. Periksa konfigurasi koneksi atau hubungi Platform Admin. Detail: "+err.Error())
+	case targetdb.PgCode(err) == "42501":
+		writeError(w, http.StatusForbidden, "Database target menolak perintah karena role koneksi tidak memiliki hak: "+targetdb.PgErrorMessage(err))
+	case targetdb.PgCode(err) != "":
+		writeError(w, http.StatusBadGateway, "Database target mengembalikan error: "+targetdb.PgErrorMessage(err))
+	case errors.Is(err, context.DeadlineExceeded):
+		writeError(w, http.StatusGatewayTimeout, "Permintaan ke database melebihi batas waktu.")
 	default:
-		s.fail(w, r, err)
-		return
+		slog.ErrorContext(r.Context(), "request failed", "event", "http.error", "path", r.URL.Path, "error", err)
+		writeError(w, http.StatusInternalServerError, "Terjadi kesalahan pada server.")
 	}
-	http.Redirect(w, r, target, http.StatusSeeOther)
-}
-
-func pgCode(err error) string {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		return pgErr.Code
-	}
-	return ""
 }
 
 func pathID(r *http.Request, name string) int64 {
 	id, _ := strconv.ParseInt(r.PathValue(name), 10, 64)
 	return id
-}
-
-func formID(r *http.Request, name string) int64 {
-	id, _ := strconv.ParseInt(r.PostFormValue(name), 10, 64)
-	return id
-}
-
-// safeNext only allows local redirect targets after login.
-func safeNext(next string) string {
-	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.HasPrefix(next, "/\\") {
-		return "/"
-	}
-	return next
 }
