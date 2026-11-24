@@ -17,7 +17,7 @@ func TestLoginSetsSecureSessionCookie(t *testing.T) {
 	e := newEnv(t)
 	c := e.client()
 	r := c.login("root", "password-root")
-	expectStatus(t, "login", r, http.StatusSeeOther)
+	expectStatus(t, "login", r, http.StatusOK)
 
 	var sc *http.Cookie
 	for _, ck := range r.cookies {
@@ -31,16 +31,13 @@ func TestLoginSetsSecureSessionCookie(t *testing.T) {
 	if !sc.HttpOnly || sc.SameSite != http.SameSiteLaxMode || sc.Path != "/" {
 		t.Fatalf("cookie flags: %+v", sc)
 	}
-	if strings.Contains(r.location, sc.Value) || strings.Contains(r.body, sc.Value) {
-		t.Fatal("session identifier leaked into URL or body")
+	if strings.Contains(r.body, sc.Value) || strings.Contains(r.body, "password-root") {
+		t.Fatal("session identifier or password leaked into the response body")
 	}
-	home := c.get("/")
-	expectStatus(t, "dashboard", home, http.StatusOK)
-	if strings.Contains(home.body, sc.Value) || strings.Contains(home.body, "password-root") {
-		t.Fatal("secret leaked into page")
-	}
-	if home.status == http.StatusOK && !strings.Contains(home.body, "root") {
-		t.Fatal("dashboard should show username")
+	s := c.get("/api/session")
+	expectStatus(t, "session", s, http.StatusOK)
+	if !strings.Contains(s.body, `"username":"root"`) || strings.Contains(s.body, sc.Value) {
+		t.Fatalf("session endpoint: %s", s.body)
 	}
 }
 
@@ -57,23 +54,24 @@ func TestLoginFailures(t *testing.T) {
 	if c.sessionCookie() != "" {
 		t.Fatal("failed login must not create a session")
 	}
-
-	// Login form without the CSRF token is rejected.
-	r = c.postRaw("/login", url.Values{"username": {"root"}, "password": {"password-root"}}, nil)
-	expectStatus(t, "login without csrf", r, http.StatusForbidden)
+	// A cross-site page cannot log a victim in (login CSRF).
+	r = c.do("POST", "/api/login", map[string]string{"username": "root", "password": "password-root"},
+		map[string]string{"Origin": "https://evil.example"})
+	expectStatus(t, "cross-site login", r, http.StatusForbidden)
+	// Plain form posts are not accepted.
+	r = c.do("POST", "/api/login", nil, map[string]string{"Content-Type": "application/x-www-form-urlencoded"})
+	expectStatus(t, "form login", r, http.StatusBadRequest)
 }
 
-func TestProtectedPagesRequireLogin(t *testing.T) {
+func TestProtectedEndpointsRequireLogin(t *testing.T) {
 	e := newEnv(t)
 	c := e.client()
-	for _, p := range []string{"/", "/admin/users", "/db/1", "/db/1/migrations"} {
-		r := c.get(p)
-		if r.status != http.StatusSeeOther || !strings.HasPrefix(r.location, "/login") {
-			t.Errorf("%s: status %d location %q", p, r.status, r.location)
-		}
+	for _, p := range []string{"/api/session", "/api/databases", "/api/admin/users", "/api/db/1", "/api/db/1/migrations"} {
+		expectStatus(t, p, c.get(p), http.StatusUnauthorized)
 	}
-	r := c.postRaw("/admin/groups", url.Values{"name": {"x"}}, nil)
-	expectStatus(t, "anonymous post", r, http.StatusUnauthorized)
+	expectStatus(t, "anonymous post", c.post("/api/admin/groups", map[string]string{"name": "x"}), http.StatusUnauthorized)
+	// The SPA itself loads for everyone; it then asks /api/session.
+	expectStatus(t, "spa", c.get("/db/1/migrations"), http.StatusOK)
 }
 
 func TestLogoutRevokesSessionOnServer(t *testing.T) {
@@ -81,41 +79,33 @@ func TestLogoutRevokesSessionOnServer(t *testing.T) {
 	c := e.client()
 	c.mustLogin("root")
 	old := c.sessionCookie()
-
-	r := c.post("/logout", nil)
-	expectStatus(t, "logout", r, http.StatusSeeOther)
+	expectStatus(t, "logout", c.post("/api/logout", nil), http.StatusOK)
 
 	// Replaying the old identifier must not work: the session is dead on
 	// the server, not only removed from the browser.
 	replay := e.client()
 	u, _ := url.Parse(e.srv.URL)
 	replay.http.Jar.SetCookies(u, []*http.Cookie{{Name: "dbmp_session", Value: old}})
-	r = replay.get("/")
-	if r.status != http.StatusSeeOther || !strings.HasPrefix(r.location, "/login") {
-		t.Fatalf("old session still accepted: %d", r.status)
-	}
+	expectStatus(t, "replay", replay.get("/api/session"), http.StatusUnauthorized)
 }
 
 func TestStateChangesRequireCSRF(t *testing.T) {
 	e := newEnv(t)
 	c := e.client()
 	c.mustLogin("root")
+	body := map[string]string{"name": "g"}
 
-	r := c.postRaw("/admin/groups", url.Values{"name": {"no-token"}}, nil)
-	expectStatus(t, "missing token", r, http.StatusForbidden)
-	r = c.postRaw("/admin/groups", url.Values{"name": {"bad-token"}, "csrf_token": {"forged"}}, nil)
-	expectStatus(t, "wrong token", r, http.StatusForbidden)
-	token := c.csrf("/")
-	r = c.postRaw("/admin/groups", url.Values{"name": {"cross-site"}, "csrf_token": {token}},
-		map[string]string{"Origin": "https://evil.example"})
-	expectStatus(t, "cross origin", r, http.StatusForbidden)
+	expectStatus(t, "missing token", c.do("POST", "/api/admin/groups", body, nil), http.StatusForbidden)
+	expectStatus(t, "wrong token", c.do("POST", "/api/admin/groups", body, map[string]string{"X-CSRF-Token": "forged"}), http.StatusForbidden)
+	expectStatus(t, "cross origin", c.do("POST", "/api/admin/groups", body,
+		map[string]string{"X-CSRF-Token": c.csrf, "Origin": "https://evil.example"}), http.StatusForbidden)
+	expectStatus(t, "cross-site fetch", c.do("POST", "/api/admin/groups", body,
+		map[string]string{"X-CSRF-Token": c.csrf, "Sec-Fetch-Site": "cross-site"}), http.StatusForbidden)
 
-	groups, _ := e.store.ListGroups(context.Background())
-	if len(groups) != 0 {
+	if groups, _ := e.store.ListGroups(context.Background()); len(groups) != 0 {
 		t.Fatalf("rejected requests created groups: %v", groups)
 	}
-	r = c.post("/admin/groups", url.Values{"name": {"ok"}})
-	expectStatus(t, "valid token", r, http.StatusSeeOther)
+	expectStatus(t, "valid token", c.post("/api/admin/groups", body), http.StatusCreated)
 }
 
 func TestDeactivatedUserIsLoggedOut(t *testing.T) {
@@ -123,30 +113,27 @@ func TestDeactivatedUserIsLoggedOut(t *testing.T) {
 	uid := e.createUser("alice", false)
 	alice := e.client()
 	alice.mustLogin("alice")
-	expectStatus(t, "alice home", alice.get("/"), http.StatusOK)
+	expectStatus(t, "alice", alice.get("/api/session"), http.StatusOK)
 
 	root := e.client()
 	root.mustLogin("root")
-	r := root.post(fmt.Sprintf("/admin/users/%d", uid), url.Values{}) // is_active unchecked
-	expectStatus(t, "deactivate", r, http.StatusSeeOther)
+	r := root.send("PUT", fmt.Sprintf("/api/admin/users/%d", uid), map[string]bool{"is_admin": false, "is_active": false})
+	expectStatus(t, "deactivate", r, http.StatusOK)
 
-	r = alice.get("/")
-	if r.status != http.StatusSeeOther || !strings.HasPrefix(r.location, "/login") {
-		t.Fatalf("deactivated user still logged in: %d", r.status)
-	}
+	expectStatus(t, "after deactivation", alice.get("/api/session"), http.StatusUnauthorized)
 	expectStatus(t, "login while inactive", alice.login("alice", "password-alice"), http.StatusUnauthorized)
 }
 
-func TestNonAdminCannotUseAdminPages(t *testing.T) {
+func TestNonAdminCannotUseAdminEndpoints(t *testing.T) {
 	e := newEnv(t)
 	e.createUser("alice", false)
 	c := e.client()
 	c.mustLogin("alice")
-	for _, p := range []string{"/admin/users", "/admin/groups", "/admin/databases"} {
+	for _, p := range []string{"/api/admin/users", "/api/admin/groups", "/api/admin/databases"} {
 		expectStatus(t, p, c.get(p), http.StatusForbidden)
 	}
-	// Hidden UI is not the protection: direct POSTs are rejected too.
-	expectStatus(t, "create user", c.post("/admin/users", url.Values{"username": {"mallory"}, "password": {"password123"}, "is_admin": {"1"}}), http.StatusForbidden)
+	r := c.post("/api/admin/users", map[string]any{"username": "mallory", "password": "password123", "is_admin": true})
+	expectStatus(t, "create user", r, http.StatusForbidden)
 	if _, err := e.store.GetUserByUsername(context.Background(), "mallory"); err == nil {
 		t.Fatal("non-admin created a user")
 	}
@@ -161,11 +148,11 @@ func TestPrivilegeIncreaseRotatesSessionIdentifier(t *testing.T) {
 
 	root := e.client()
 	root.mustLogin("root")
-	expectStatus(t, "promote", root.post(fmt.Sprintf("/admin/users/%d", uid), url.Values{"is_admin": {"1"}, "is_active": {"1"}}), http.StatusSeeOther)
+	expectStatus(t, "promote", root.send("PUT", fmt.Sprintf("/api/admin/users/%d", uid),
+		map[string]bool{"is_admin": true, "is_active": true}), http.StatusOK)
 
-	expectStatus(t, "admin page after promotion", alice.get("/admin/users"), http.StatusOK)
-	after := alice.sessionCookie()
-	if after == "" || after == before {
+	expectStatus(t, "admin endpoint after promotion", alice.get("/api/admin/users"), http.StatusOK)
+	if after := alice.sessionCookie(); after == "" || after == before {
 		t.Fatal("identifier must change after privilege increase")
 	}
 }
