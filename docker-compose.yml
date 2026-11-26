@@ -1,8 +1,10 @@
 x-app-env: &app-env
   DATABASE_URL: postgres://dbmp:dbmp@platform-db:5432/dbmp?sslmode=disable
   APP_SECRET_KEY: ${APP_SECRET_KEY:-change-me-to-a-long-random-secret}
+  METRICS_ADDR: ":9090"
   LOG_LEVEL: ${LOG_LEVEL:-info}
   OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-none}
+  OTEL_LOGS_EXPORTER: ${OTEL_LOGS_EXPORTER:-none}
 
 services:
   platform-db:
