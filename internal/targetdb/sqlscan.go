@@ -1,29 +1,63 @@
 package targetdb
 
 import (
+	"regexp"
 	"strings"
 	"unicode"
 
 	"dbmp/internal/model"
 )
 
-func Validate(name, sql string) error {
+func Validate(m model.Migration) error {
+	switch {
+	case strings.TrimSpace(m.Name) == "" || len(m.Name) > 200:
+		return model.Invalid("Nama migration wajib diisi (maksimal 200 karakter).")
+	case m.Mode != model.ModeNormal && m.Mode != model.ModeBatch:
+		return model.Invalid("Mode harus normal atau batch.")
+	case m.IrreversibleReason == "" && strings.TrimSpace(m.DownSQL) == "":
+		return model.Invalid("Isi SQL down, atau tandai migration sebagai irreversible beserta alasannya.")
+	case m.IrreversibleReason != "" && strings.TrimSpace(m.DownSQL) != "":
+		return model.Invalid("Migration irreversible tidak boleh memiliki SQL down.")
+	}
+	if err := validateSQL("up", m.UpSQL, m.Mode); err != nil {
+		return err
+	}
+	if m.IrreversibleReason == "" {
+		if err := validateSQL("down", m.DownSQL, m.Mode); err != nil {
+			return err
+		}
+	}
+	if m.Mode == model.ModeBatch {
+		switch {
+		case !identRe.MatchString(m.BatchTable) || !identRe.MatchString(m.BatchColumn):
+			return model.Invalid("Batch: nama table (boleh schema.table) dan kolom cursor wajib diisi dan hanya huruf, angka, atau garis bawah.")
+		case m.BatchSize < 1 || m.BatchSize > 100000:
+			return model.Invalid("Batch size harus antara 1 dan 100000.")
+		}
+	}
+	return nil
+}
+
+var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$`)
+
+func validateSQL(which, sql, mode string) error {
 	stmts := Split(sql)
 	switch {
-	case strings.TrimSpace(name) == "" || len(name) > 200:
-		return model.Invalid("Nama migration wajib diisi (maksimal 200 karakter).")
 	case len(stmts) == 0:
-		return model.Invalid("SQL migration tidak boleh kosong.")
+		return model.Invalid("SQL " + which + " tidak boleh kosong.")
 	case len(TransactionControl(stmts)) > 0:
-		return model.Invalid("Statement " + TransactionControl(stmts)[0].Keyword +
-			" tidak diizinkan: platform sudah menjalankan migration di dalam transaction.")
+		return model.Invalid("SQL " + which + ": statement " + TransactionControl(stmts)[0].Keyword +
+			" tidak diizinkan; platform sudah menjalankan migration di dalam transaction.")
+	case mode == model.ModeBatch && (len(stmts) != 1 || !strings.Contains(sql, "$1") || !strings.Contains(sql, "$2")):
+		return model.Invalid("Batch: SQL " + which + " harus satu statement yang memakai $1 (cursor awal, eksklusif) dan $2 (cursor akhir, inklusif), " +
+			"misalnya ... WHERE id > $1 AND id <= $2.")
 	}
 	return nil
 }
 
 type Statement struct {
-	Text    string 
-	Keyword string 
+	Text    string
+	Keyword string
 }
 
 func Split(script string) []Statement {
@@ -102,7 +136,7 @@ func skipBlockComment(s string, i int) int {
 
 func skipQuoted(s string, i int, q byte, backslashEscapes bool) int {
 	n := len(s)
-	i++ 
+	i++
 	for i < n {
 		switch s[i] {
 		case '\\':
@@ -111,7 +145,7 @@ func skipQuoted(s string, i int, q byte, backslashEscapes bool) int {
 				continue
 			}
 		case q:
-			if i+1 < n && s[i+1] == q { 
+			if i+1 < n && s[i+1] == q {
 				i += 2
 				continue
 			}
@@ -123,7 +157,7 @@ func skipQuoted(s string, i int, q byte, backslashEscapes bool) int {
 }
 
 func dollarTag(s string, i int) (string, bool) {
-	if i > 0 && isIdentChar(s[i-1]) { 
+	if i > 0 && isIdentChar(s[i-1]) {
 		return "", false
 	}
 	j := i + 1
@@ -154,7 +188,7 @@ func firstKeyword(s string) string {
 		case s[i] == '/' && i+1 < n && s[i+1] == '*':
 			i = skipBlockComment(s, i)
 		case s[i] == '(':
-			i++ 
+			i++
 		default:
 			j := i
 			for j < n && isIdentChar(s[j]) {
@@ -178,7 +212,7 @@ func TransactionControl(stmts []Statement) []Statement {
 			continue
 		}
 		if s.Keyword == "PREPARE" && !strings.Contains(strings.ToUpper(s.Text), "TRANSACTION") {
-			continue 
+			continue
 		}
 		bad = append(bad, s)
 	}

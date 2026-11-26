@@ -3,6 +3,8 @@ package targetdb
 import (
 	"reflect"
 	"testing"
+
+	"dbmp/internal/model"
 )
 
 func keywords(stmts []Statement) []string {
@@ -87,19 +89,36 @@ func TestExplainable(t *testing.T) {
 }
 
 func TestValidate(t *testing.T) {
+	normal := model.Migration{Name: "add column", Mode: model.ModeNormal,
+		UpSQL: "ALTER TABLE a ADD COLUMN b int", DownSQL: "ALTER TABLE a DROP COLUMN b"}
+	batch := model.Migration{Name: "bump", Mode: model.ModeBatch, BatchTable: "public.big", BatchColumn: "id", BatchSize: 500,
+		UpSQL: "UPDATE big SET v = v + 1 WHERE id > $1 AND id <= $2", DownSQL: "UPDATE big SET v = v - 1 WHERE id > $1 AND id <= $2"}
 	cases := []struct {
-		name, sql string
-		ok        bool
+		name string
+		base model.Migration
+		edit func(*model.Migration)
+		ok   bool
 	}{
-		{"add column", "ALTER TABLE a ADD COLUMN b int", true},
-		{"", "SELECT 1", false},
-		{"empty sql", "  -- nothing ", false},
-		{"manual tx", "BEGIN; SELECT 1; COMMIT;", false},
+		{"valid", normal, func(*model.Migration) {}, true},
+		{"no name", normal, func(m *model.Migration) { m.Name = "" }, false},
+		{"empty up", normal, func(m *model.Migration) { m.UpSQL = "  -- nothing " }, false},
+		{"manual tx", normal, func(m *model.Migration) { m.UpSQL = "BEGIN; SELECT 1; COMMIT;" }, false},
+		{"manual tx in down", normal, func(m *model.Migration) { m.DownSQL = "ROLLBACK" }, false},
+		{"no down", normal, func(m *model.Migration) { m.DownSQL = "" }, false},
+		{"irreversible with reason", normal, func(m *model.Migration) { m.DownSQL, m.IrreversibleReason = "", "drops data" }, true},
+		{"irreversible with down", normal, func(m *model.Migration) { m.IrreversibleReason = "drops data" }, false},
+		{"bad mode", normal, func(m *model.Migration) { m.Mode = "fast" }, false},
+		{"valid batch", batch, func(*model.Migration) {}, true},
+		{"batch without params", batch, func(m *model.Migration) { m.UpSQL = "UPDATE big SET v = 1" }, false},
+		{"batch two statements", batch, func(m *model.Migration) { m.UpSQL += "; SELECT $1, $2" }, false},
+		{"batch bad table", batch, func(m *model.Migration) { m.BatchTable = "big; drop" }, false},
+		{"batch size", batch, func(m *model.Migration) { m.BatchSize = 0 }, false},
 	}
 	for _, c := range cases {
-		err := Validate(c.name, c.sql)
-		if (err == nil) != c.ok {
-			t.Errorf("Validate(%q, %q) = %v, want ok=%v", c.name, c.sql, err, c.ok)
+		m := c.base
+		c.edit(&m)
+		if err := Validate(m); (err == nil) != c.ok {
+			t.Errorf("%s: %v, want ok=%v", c.name, err, c.ok)
 		}
 	}
 }
