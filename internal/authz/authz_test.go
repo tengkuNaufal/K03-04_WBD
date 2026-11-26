@@ -88,3 +88,14 @@ func TestAuthorizeErrors(t *testing.T) {
 		t.Fatal("database levels never allow platform actions")
 	}
 }
+
+func TestApprovableGroups(t *testing.T) {
+	leader := func(id int64) *int64 { return &id }
+	pending := []PendingApproval{{GroupID: 1, LeaderID: leader(7)}, {GroupID: 2, LeaderID: leader(8)}, {GroupID: 3, LeaderID: nil}, {GroupID: 4, LeaderID: leader(7)}}
+	if got := ApprovableGroups(7, pending); len(got) != 2 || got[0] != 1 || got[1] != 4 {
+		t.Fatalf("leader of 1 and 4: %v", got)
+	}
+	if got := ApprovableGroups(9, pending); len(got) != 0 {
+		t.Fatalf("non-leader: %v", got)
+	}
+}
