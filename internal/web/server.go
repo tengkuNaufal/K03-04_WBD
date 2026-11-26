@@ -176,6 +176,8 @@ func observe(next http.Handler) http.Handler {
 		took := time.Since(start)
 
 		span.SetAttributes(attribute.String("http.route", info.route), attribute.Int("http.status_code", rec.status))
+		obs.HTTPRequests.WithLabelValues(info.route, r.Method, strconv.Itoa(rec.status)).Inc()
+		obs.HTTPDuration.WithLabelValues(info.route, r.Method).Observe(took.Seconds())
 		level := slog.LevelInfo
 		if !strings.HasPrefix(r.URL.Path, "/api/") {
 			level = slog.LevelDebug
