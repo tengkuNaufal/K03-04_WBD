@@ -1,13 +1,13 @@
 import { NavLink, Route, Routes, useParams } from 'react-router-dom'
 import { useApi } from '../api.js'
 import { Crumbs, LEVEL, Page } from '../ui.jsx'
-import Tables from '../Tables.jsx'
-import TableView from '../TableView.jsx'
-import Migrations from '../Migrations.jsx'
-import MigrationEdit from '../MigrationEdit.jsx'
-import Requests from '../Requests.jsx'
-import RequestDetail from '../RequestDetail.jsx'
-import History from '../History.jsx'
+import Tables from './Tables.jsx'
+import TableView from './TableView.jsx'
+import Migrations from './Migrations.jsx'
+import MigrationEdit from './MigrationEdit.jsx'
+import Requests from './Requests.jsx'
+import RequestDetail from './RequestDetail.jsx'
+import History from './History.jsx'
 
 export default function Database() {
   const { dbID } = useParams()

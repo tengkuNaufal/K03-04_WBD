@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"strconv"
@@ -15,12 +16,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"dbmp/internal/model"
+	"dbmp/internal/obs"
 	"dbmp/internal/secret"
 )
 
 const (
 	QueryTimeout = 10 * time.Second // viewer queries
-	ExecTimeout  = 60 * time.Second // migrations and EXPLAIN
+	ExecTimeout  = 60 * time.Second // validation and EXPLAIN
 )
 
 type ConnError struct{ Err error }
@@ -33,7 +35,6 @@ func IsConnError(err error) bool {
 	return errors.As(err, &ce)
 }
 
-// Params are the plain connection settings of a target database.
 type Params struct {
 	Host, DBName, Username, Password, SSLMode string
 	Port                                      int
@@ -50,7 +51,6 @@ func (p Params) connString() string {
 	return u.String()
 }
 
-// Test opens one connection with the given settings.
 func Test(ctx context.Context, p Params) error {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
@@ -65,7 +65,6 @@ type Lookup interface {
 	GetDatabase(ctx context.Context, id int64) (model.Database, error)
 }
 
-// Manager keeps one connection pool per target database.
 type Manager struct {
 	lookup Lookup
 	box    *secret.Box
@@ -97,6 +96,7 @@ func (m *Manager) pool(ctx context.Context, id int64) (*pgxpool.Pool, error) {
 		return nil, &ConnError{Err: err}
 	}
 	cfg.MaxConns = 5
+	cfg.ConnConfig.Tracer = &obs.QueryTracer{Pool: "target", LogParams: true, Level: slog.LevelInfo}
 	p, err := pgxpool.NewWithConfig(context.Background(), cfg)
 	if err != nil {
 		return nil, &ConnError{Err: err}
@@ -105,7 +105,6 @@ func (m *Manager) pool(ctx context.Context, id int64) (*pgxpool.Pool, error) {
 	return p, nil
 }
 
-// Invalidate closes the pool of a database whose settings changed.
 func (m *Manager) Invalidate(id int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -116,12 +115,17 @@ func (m *Manager) Invalidate(id int64) {
 }
 
 func (m *Manager) Close() {
+	m.mu.Lock()
+	ids := make([]int64, 0, len(m.pools))
 	for id := range m.pools {
+		ids = append(ids, id)
+	}
+	m.mu.Unlock()
+	for _, id := range ids {
 		m.Invalidate(id)
 	}
 }
 
-// begin starts a transaction with a statement timeout.
 func (m *Manager) begin(ctx context.Context, id int64, opts pgx.TxOptions, timeout time.Duration) (pgx.Tx, func(), error) {
 	p, err := m.pool(ctx, id)
 	if err != nil {
@@ -147,6 +151,16 @@ func (m *Manager) begin(ctx context.Context, id int64, opts pgx.TxOptions, timeo
 	return tx, done, nil
 }
 
+func PgCode(err error) string { return pgCode(err) }
+
+func pgCode(err error) string {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code
+	}
+	return ""
+}
+
 func summarize(err error) string {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
@@ -163,7 +177,6 @@ func summarize(err error) string {
 	return err.Error()
 }
 
-// PgErrorMessage formats a PostgreSQL error for display.
 func PgErrorMessage(err error) string {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {
