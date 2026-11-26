@@ -37,6 +37,8 @@ func (l Level) Label() string {
 	return "Tidak ada akses"
 }
 
+func (l Level) MarshalJSON() ([]byte, error) { return []byte(`"` + l.String() + `"`), nil }
+
 func ParseLevel(s string) (Level, error) {
 	switch s {
 	case "view":
@@ -64,9 +66,27 @@ const (
 	ActionManagePlatform Action = "platform.manage"
 	// ActionView covers schema, data and migration history of a database.
 	ActionView Action = "db.view"
-	// ActionEdit covers creating, editing, explaining and executing migrations.
+	// ActionEdit covers creating, editing, validating migrations, submitting
+	// change requests (apply, rollback, forward, resume) and executing approved ones.
 	ActionEdit Action = "db.edit"
 )
+
+// PendingApproval is a group whose approval a change request still needs.
+type PendingApproval struct {
+	GroupID  int64
+	LeaderID *int64
+}
+
+// ApprovableGroups returns the pending groups the user may decide for.
+func ApprovableGroups(userID int64, pending []PendingApproval) []int64 {
+	var out []int64
+	for _, p := range pending {
+		if p.LeaderID != nil && *p.LeaderID == userID {
+			out = append(out, p.GroupID)
+		}
+	}
+	return out
+}
 
 type rule struct {
 	platform bool  // only Platform Admin
@@ -86,9 +106,9 @@ var (
 )
 
 type Principal struct {
-	UserID   int64
-	Username string
-	IsAdmin  bool
+	UserID   int64  `json:"user_id"`
+	Username string `json:"username"`
+	IsAdmin  bool   `json:"is_admin"`
 }
 
 // AccessSource returns the levels of every group of a user on a database.

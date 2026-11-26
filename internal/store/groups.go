@@ -9,12 +9,26 @@ import (
 	"dbmp/internal/model"
 )
 
-const groupCols = `g.id, g.name, (SELECT count(*) FROM group_members m WHERE m.group_id = g.id)`
+const groupCols = `g.id, g.name, (SELECT count(*) FROM group_members m WHERE m.group_id = g.id), g.leader_id,
+	COALESCE((SELECT username FROM users WHERE id = g.leader_id), '')`
 
 func scanGroup(row pgx.Row) (model.Group, error) {
 	var g model.Group
-	err := row.Scan(&g.ID, &g.Name, &g.MemberCount)
+	err := row.Scan(&g.ID, &g.Name, &g.MemberCount, &g.LeaderID, &g.Leader)
 	return g, mapErr(err)
+}
+
+// SetLeader makes a member the leader of a group (nil clears it).
+func (s *Store) SetLeader(ctx context.Context, groupID int64, userID *int64) error {
+	if userID == nil {
+		return s.exec(ctx, `UPDATE groups SET leader_id = NULL WHERE id = $1`, groupID)
+	}
+	err := s.exec(ctx, `UPDATE groups SET leader_id = $2 WHERE id = $1
+		AND EXISTS (SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2)`, groupID, *userID)
+	if err == model.ErrNotFound {
+		return model.Invalid("Leader harus anggota group.")
+	}
+	return err
 }
 
 func (s *Store) CreateGroup(ctx context.Context, name string) (int64, error) {
@@ -40,7 +54,11 @@ func (s *Store) AddMember(ctx context.Context, groupID, userID int64) error {
 	return mapErr(err)
 }
 
+// RemoveMember also clears the leader if the member led the group.
 func (s *Store) RemoveMember(ctx context.Context, groupID, userID int64) error {
+	if _, err := s.pool.Exec(ctx, `UPDATE groups SET leader_id = NULL WHERE id = $1 AND leader_id = $2`, groupID, userID); err != nil {
+		return err
+	}
 	return s.exec(ctx, `DELETE FROM group_members WHERE group_id = $1 AND user_id = $2`, groupID, userID)
 }
 
@@ -130,4 +148,12 @@ func (s *Store) AccessibleDatabases(ctx context.Context, userID int64) ([]model.
 		a.Level = authz.EffectiveLevel(levels)
 		return a, nil
 	})
+}
+
+// AccessGroups lists the groups that have any access to a database: the
+// groups whose leaders must approve its changes.
+func (s *Store) AccessGroups(ctx context.Context, databaseID int64) ([]model.Group, error) {
+	rows, _ := s.pool.Query(ctx, `SELECT `+groupCols+` FROM groups g
+		WHERE g.id IN (SELECT group_id FROM group_database_access WHERE database_id = $1) ORDER BY g.name`, databaseID)
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (model.Group, error) { return scanGroup(r) })
 }

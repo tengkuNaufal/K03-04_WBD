@@ -1,59 +1,57 @@
 package web
 
 import (
-	"crypto/subtle"
 	"errors"
 	"log/slog"
 	"net/http"
 
 	"dbmp/internal/auth"
+	"dbmp/internal/authz"
+	"dbmp/internal/model"
 )
 
-type loginData struct{ Username, Next string }
-
-func (s *Server) loginForm(w http.ResponseWriter, r *http.Request) {
-	if principal(r) != nil {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
-		return
-	}
-	s.renderLogin(w, r, http.StatusOK, loginData{Next: r.URL.Query().Get("next")}, "")
+type sessionView struct {
+	User *authz.Principal `json:"user"`
+	CSRF string           `json:"csrf"`
 }
 
-func (s *Server) renderLogin(w http.ResponseWriter, r *http.Request, status int, d loginData, errMsg string) {
-	token := randomToken()
-	http.SetCookie(w, s.cookie(loginCSRFCookie, token, 3600, http.SameSiteStrictMode))
-	p := s.page(w, r, "Login", d)
-	p.CSRF, p.Error = token, errMsg
-	s.render(w, status, "login", p)
+func (s *Server) sessionInfo(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, sessionView{User: principal(r), CSRF: currentSession(r).CSRFToken})
 }
 
+// login: JSON only and same-origin, so a cross-site page cannot submit it.
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	d := loginData{Username: r.PostFormValue("username"), Next: r.PostFormValue("next")}
-	c, err := r.Cookie(loginCSRFCookie)
-	form := r.PostFormValue(csrfField)
-	if err != nil || form == "" || !sameOrigin(r) || subtle.ConstantTimeCompare([]byte(c.Value), []byte(form)) != 1 {
-		s.renderLogin(w, r, http.StatusForbidden, d, "Sesi form login kedaluwarsa. Silakan coba lagi.")
+	var in struct{ Username, Password string }
+	if !sameOrigin(r) {
+		writeError(w, http.StatusForbidden, "Permintaan lintas situs ditolak.")
 		return
 	}
-
+	if err := decode(r, &in); err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	var previous string
 	if old, err := r.Cookie(sessionCookie); err == nil {
 		previous = old.Value
 	}
-	token, sess, err := s.Auth.Login(r.Context(), d.Username, r.PostFormValue("password"), previous)
+	token, sess, err := s.Auth.Login(r.Context(), in.Username, in.Password, previous)
 	if errors.Is(err, auth.ErrInvalidCredentials) {
-		slog.Info("login failed", "username", auth.NormalizeUsername(d.Username))
-		s.renderLogin(w, r, http.StatusUnauthorized, d, "Username atau password salah.")
+		slog.InfoContext(r.Context(), "login failed", "event", "auth.login", "status", "failed", "actor", auth.NormalizeUsername(in.Username))
+		writeError(w, http.StatusUnauthorized, "Username atau password salah.")
 		return
 	}
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	s.clearCookie(w, loginCSRFCookie)
 	s.setSessionCookie(w, token, sess.AbsoluteExpiresAt)
-	slog.Info("login succeeded", "user_id", sess.UserID)
-	http.Redirect(w, r, safeNext(d.Next), http.StatusSeeOther)
+	p, _, err := s.Auth.Authenticate(r.Context(), token)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	slog.InfoContext(r.Context(), "login succeeded", "event", "auth.login", "status", "ok", "actor", p.Username)
+	writeJSON(w, http.StatusOK, sessionView{User: p, CSRF: sess.CSRFToken})
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
@@ -62,15 +60,39 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.clearCookie(w, sessionCookie)
-	http.Redirect(w, r, "/login", http.StatusSeeOther)
+	s.clearCookie(w)
+	slog.InfoContext(r.Context(), "logout", "event", "auth.logout", "status", "ok", "actor", principal(r).Username)
+	writeOK(w, "Logout berhasil.")
 }
 
-func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
+type databaseView struct {
+	ID    int64       `json:"id"`
+	Name  string      `json:"name"`
+	Level authz.Level `json:"level"`
+}
+
+func (s *Server) databases(w http.ResponseWriter, r *http.Request) {
 	dbs, err := s.Store.AccessibleDatabases(r.Context(), principal(r).UserID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	s.render(w, http.StatusOK, "dashboard", s.page(w, r, "Dashboard", dbs))
+	out := []databaseView{}
+	for _, d := range dbs {
+		out = append(out, databaseView{ID: d.Database.ID, Name: d.Database.Name, Level: d.Level})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// reviews lists requests waiting for the user's approval as a group leader.
+func (s *Server) reviews(w http.ResponseWriter, r *http.Request) {
+	rs, err := s.Store.AwaitingApproval(r.Context(), principal(r).UserID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if rs == nil {
+		rs = []model.Request{}
+	}
+	writeJSON(w, http.StatusOK, rs)
 }
