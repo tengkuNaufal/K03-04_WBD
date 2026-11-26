@@ -1,3 +1,4 @@
+// Command server runs the API and serves the SPA.
 package main
 
 import (
@@ -6,60 +7,47 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
+	"dbmp/internal/app"
 	"dbmp/internal/auth"
 	"dbmp/internal/authz"
-	"dbmp/internal/secret"
 	"dbmp/internal/session"
 	"dbmp/internal/store"
-	"dbmp/internal/targetdb"
 	"dbmp/internal/web"
 	webui "dbmp/web"
 )
 
 func main() {
 	if err := run(); err != nil {
-		slog.Error("fatal", "error", err)
+		slog.Error("fatal", "event", "server.fatal", "error", err)
 		os.Exit(1)
 	}
 }
 
 func run() error {
-	ctx := context.Background()
-	if os.Getenv("DATABASE_URL") == "" {
-		return errors.New("DATABASE_URL is required")
-	}
-	box, err := secret.NewBox([]byte(os.Getenv("APP_SECRET_KEY")))
-	if err != nil {
-		return errors.New("APP_SECRET_KEY is required (at least 16 characters)")
-	}
-	pool, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	d, err := app.Open(ctx, "dbmp-server")
 	if err != nil {
 		return err
 	}
-	defer pool.Close()
-	if err := store.Migrate(ctx, pool); err != nil {
-		return err
-	}
+	defer d.Close()
 
-	st := store.New(pool)
-	sessions := session.NewManager(st.Sessions(), session.DefaultConfig())
-	targets := targetdb.NewManager(st, box)
-	defer targets.Close()
-	if err := bootstrapAdmin(ctx, st); err != nil {
+	sessions := session.NewManager(d.Store.Sessions(), session.DefaultConfig())
+	if err := bootstrapAdmin(ctx, d.Store); err != nil {
 		return err
 	}
 
 	srv := &web.Server{
-		Store:        st,
+		Store:        d.Store,
 		Sessions:     sessions,
-		Auth:         auth.NewService(st, sessions),
-		Policy:       authz.NewPolicy(st),
-		Targets:      targets,
-		Box:          box,
+		Auth:         auth.NewService(d.Store, sessions),
+		Policy:       authz.NewPolicy(d.Store),
+		Targets:      d.Targets,
+		Box:          d.Box,
 		Assets:       webui.FS,
 		CookieSecure: os.Getenv("COOKIE_SECURE") == "true",
 	}
@@ -77,8 +65,18 @@ func run() error {
 	if addr == "" {
 		addr = ":8080"
 	}
-	slog.Info("listening", "addr", addr)
-	return (&http.Server{Addr: addr, Handler: srv, ReadHeaderTimeout: 10 * time.Second}).ListenAndServe()
+	hs := &http.Server{Addr: addr, Handler: srv, ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = hs.Shutdown(shutdownCtx)
+	}()
+	slog.Info("listening", "event", "server.start", "addr", addr)
+	if err := hs.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }
 
 func bootstrapAdmin(ctx context.Context, st *store.Store) error {
@@ -95,6 +93,6 @@ func bootstrapAdmin(ctx context.Context, st *store.Store) error {
 		return err
 	}
 	_, err = st.CreateUser(ctx, name, hash, true)
-	slog.Info("created first admin", "username", name)
+	slog.Info("created first admin", "event", "admin.bootstrap", "actor", name)
 	return err
 }
