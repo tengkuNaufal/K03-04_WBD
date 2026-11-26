@@ -66,3 +66,13 @@ func (s *Store) RecoverStale(ctx context.Context, after time.Duration) ([]int64,
 func (s *Store) GetJob(ctx context.Context, databaseID, id int64) (model.Job, error) {
 	return scanJob(s.pool.QueryRow(ctx, `SELECT `+jobCols+` FROM jobs WHERE id = $1 AND database_id = $2`, id, databaseID))
 }
+
+// JobCounts returns the number of jobs per status (for metrics).
+func (s *Store) JobCounts(ctx context.Context) (map[string]int, error) {
+	rows, _ := s.pool.Query(ctx, `SELECT status, count(*) FROM jobs GROUP BY status`)
+	out := map[string]int{model.JobQueued: 0, model.JobRunning: 0, model.JobDone: 0, model.JobFailed: 0}
+	var status string
+	var n int
+	_, err := pgx.ForEachRow(rows, []any{&status, &n}, func() error { out[status] = n; return nil })
+	return out, err
+}

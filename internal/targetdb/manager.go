@@ -114,6 +114,17 @@ func (m *Manager) Invalidate(id int64) {
 	}
 }
 
+// Stats returns the statistics of every open target pool (for metrics).
+func (m *Manager) Stats() []*pgxpool.Stat {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]*pgxpool.Stat, 0, len(m.pools))
+	for _, p := range m.pools {
+		out = append(out, p.Stat())
+	}
+	return out
+}
+
 func (m *Manager) Close() {
 	m.mu.Lock()
 	ids := make([]int64, 0, len(m.pools))
