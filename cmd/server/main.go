@@ -14,6 +14,7 @@ import (
 	"dbmp/internal/app"
 	"dbmp/internal/auth"
 	"dbmp/internal/authz"
+	"dbmp/internal/obs"
 	"dbmp/internal/session"
 	"dbmp/internal/store"
 	"dbmp/internal/web"
@@ -40,6 +41,7 @@ func run() error {
 	if err := bootstrapAdmin(ctx, d.Store); err != nil {
 		return err
 	}
+	obs.RegisterJobCounts(d.Store.JobCounts)
 
 	srv := &web.Server{
 		Store:        d.Store,
