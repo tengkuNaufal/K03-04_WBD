@@ -1,19 +1,25 @@
+// Package integration tests real components together: the HTTP API handlers,
+// the worker, the platform store and real PostgreSQL databases (a fresh
+// platform and target database per test). Set TEST_DATABASE_URL to run them.
 package integration
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -28,10 +34,13 @@ import (
 	"dbmp/internal/store"
 	"dbmp/internal/targetdb"
 	"dbmp/internal/web"
-	webui "dbmp/web"
+	"dbmp/internal/worker"
 )
 
-func init() { auth.Cost = bcrypt.MinCost }
+func init() {
+	auth.Cost = bcrypt.MinCost
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
 
 type env struct {
 	t         *testing.T
@@ -41,8 +50,9 @@ type env struct {
 	targets   *targetdb.Manager
 	policy    *authz.Policy
 	sessions  *session.Manager
-	target    *pgxpool.Pool 
+	target    *pgxpool.Pool // direct connection to the target database
 	targetURL *url.URL
+	base      *url.URL
 }
 
 func randomSuffix() string {
@@ -83,6 +93,7 @@ CREATE TABLE customers (id serial PRIMARY KEY, name text NOT NULL, city text);
 CREATE INDEX customers_city_idx ON customers(city);
 INSERT INTO customers (name, city) SELECT 'Customer ' || g, 'Bandung' FROM generate_series(1, 75) g;
 CREATE TABLE orders (id serial PRIMARY KEY, customer_id int NOT NULL REFERENCES customers(id), total numeric(10,2) CHECK (total >= 0));
+INSERT INTO orders (customer_id, total) SELECT 1 + g % 75, g FROM generate_series(1, 1000) g;
 `
 
 func newEnv(t *testing.T) *env {
@@ -127,7 +138,7 @@ func newEnv(t *testing.T) *env {
 	targets := targetdb.NewManager(st, box)
 	t.Cleanup(targets.Close)
 	h := &web.Server{Store: st, Sessions: sessions, Auth: auth.NewService(st, sessions), Policy: policy,
-		Targets: targets, Box: box, Assets: webui.FS}
+		Targets: targets, Box: box, Assets: fstest.MapFS{"index.html": {Data: []byte("<div id=root></div>")}}}
 	if err := h.Init(); err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +146,7 @@ func newEnv(t *testing.T) *env {
 	t.Cleanup(srv.Close)
 
 	e := &env{t: t, srv: srv, store: st, box: box, targets: targets, policy: policy, sessions: sessions,
-		target: target, targetURL: targetURL}
+		target: target, targetURL: targetURL, base: base}
 	e.createUser("root", true)
 	return e
 }
@@ -150,15 +161,36 @@ func (e *env) createUser(name string, isAdmin bool) int64 {
 	return id
 }
 
-func (e *env) targetForm(name string) url.Values {
-	pw, _ := e.targetURL.User.Password()
-	host, port := e.targetURL.Hostname(), e.targetURL.Port()
-	if port == "" {
-		port = "5432"
+// worker returns a worker bound to this environment.
+func (e *env) worker(id string) *worker.Worker {
+	return &worker.Worker{Store: e.store, Targets: e.targets, ID: id, Heartbeat: 50 * time.Millisecond, StaleAfter: time.Second}
+}
+
+// drain runs queued jobs until the queue has nothing runnable.
+func (e *env) drain() {
+	e.t.Helper()
+	w := e.worker("test-worker")
+	for i := 0; i < 50; i++ {
+		found, err := w.RunOnce(context.Background())
+		if err != nil {
+			e.t.Fatal(err)
+		}
+		if !found {
+			return
+		}
 	}
-	return url.Values{
-		"name": {name}, "host": {host}, "port": {port}, "dbname": {strings.TrimPrefix(e.targetURL.Path, "/")},
-		"username": {e.targetURL.User.Username()}, "password": {pw}, "sslmode": {"disable"},
+	e.t.Fatal("queue did not drain")
+}
+
+func (e *env) targetBody(name string) map[string]any {
+	pw, _ := e.targetURL.User.Password()
+	port, _ := strconv.Atoi(e.targetURL.Port())
+	if port == 0 {
+		port = 5432
+	}
+	return map[string]any{
+		"name": name, "host": e.targetURL.Hostname(), "port": port, "dbname": strings.TrimPrefix(e.targetURL.Path, "/"),
+		"username": e.targetURL.User.Username(), "password": pw, "sslmode": "disable",
 	}
 }
 
@@ -174,87 +206,92 @@ func (e *env) addDatabaseDirect(name, host string, port int, dbname, user, pw st
 	return id
 }
 
+// ---- HTTP client ------------------------------------------------------------------
 
 type client struct {
 	e    *env
 	http *http.Client
+	csrf string
 }
 
 func (e *env) client() *client {
 	jar, _ := cookiejar.New(nil)
-	return &client{e: e, http: &http.Client{
-		Jar: jar,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-		Timeout: 30 * time.Second,
-	}}
+	return &client{e: e, http: &http.Client{Jar: jar, Timeout: 60 * time.Second}}
 }
 
 type resp struct {
-	status   int
-	body     string
-	location string
-	cookies  []*http.Cookie
+	status  int
+	body    string
+	cookies []*http.Cookie
 }
 
-func (c *client) do(req *http.Request) resp {
+func (r resp) json(t *testing.T, v any) {
+	t.Helper()
+	if err := json.Unmarshal([]byte(r.body), v); err != nil {
+		t.Fatalf("decode %q: %v", r.body, err)
+	}
+}
+
+// id returns the "id" (or "job_id") field of a JSON body.
+func (r resp) id(t *testing.T) int64 {
+	t.Helper()
+	var v struct {
+		ID    int64 `json:"id"`
+		JobID int64 `json:"job_id"`
+	}
+	r.json(t, &v)
+	return max(v.ID, v.JobID)
+}
+
+func (c *client) do(method, path string, body any, headers map[string]string) resp {
 	c.e.t.Helper()
+	var rd io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		rd = bytes.NewReader(b)
+	}
+	req, _ := http.NewRequest(method, c.e.srv.URL+path, rd)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 	res, err := c.http.Do(req)
 	if err != nil {
 		c.e.t.Fatal(err)
 	}
 	defer res.Body.Close()
 	b, _ := io.ReadAll(res.Body)
-	return resp{status: res.StatusCode, body: string(b), location: res.Header.Get("Location"), cookies: res.Cookies()}
+	return resp{status: res.StatusCode, body: string(b), cookies: res.Cookies()}
 }
 
-func (c *client) get(path string) resp {
-	req, _ := http.NewRequest("GET", c.e.srv.URL+path, nil)
-	return c.do(req)
-}
+func (c *client) get(path string) resp { return c.do("GET", path, nil, nil) }
 
-func (c *client) postRaw(path string, form url.Values, headers map[string]string) resp {
-	req, _ := http.NewRequest("POST", c.e.srv.URL+path, strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	for k, v := range headers {
-		req.Header.Set(k, v)
+// send makes a state-changing request with the session's CSRF token.
+func (c *client) send(method, path string, body any) resp {
+	if body == nil {
+		body = map[string]any{}
 	}
-	return c.do(req)
+	return c.do(method, path, body, map[string]string{"X-CSRF-Token": c.csrf})
 }
 
-var csrfRe = regexp.MustCompile(`name="csrf_token" value="([^"]+)"`)
-
-func (c *client) csrf(path string) string {
-	c.e.t.Helper()
-	r := c.get(path)
-	m := csrfRe.FindStringSubmatch(r.body)
-	if m == nil {
-		c.e.t.Fatalf("no csrf token on %s (status %d)", path, r.status)
-	}
-	return m[1]
-}
-
-func (c *client) post(path string, form url.Values) resp {
-	c.e.t.Helper()
-	if form == nil {
-		form = url.Values{}
-	}
-	form.Set("csrf_token", c.csrf("/"))
-	return c.postRaw(path, form, nil)
-}
+func (c *client) post(path string, body any) resp { return c.send("POST", path, body) }
 
 func (c *client) login(user, pw string) resp {
-	c.e.t.Helper()
-	token := c.csrf("/login")
-	return c.postRaw("/login", url.Values{"username": {user}, "password": {pw}, "csrf_token": {token}}, nil)
+	r := c.do("POST", "/api/login", map[string]string{"username": user, "password": pw}, nil)
+	if r.status == http.StatusOK {
+		var v struct{ CSRF string }
+		_ = json.Unmarshal([]byte(r.body), &v)
+		c.csrf = v.CSRF
+	}
+	return r
 }
 
 func (c *client) mustLogin(user string) {
 	c.e.t.Helper()
-	r := c.login(user, "password-"+user)
-	if r.status != http.StatusSeeOther {
-		c.e.t.Fatalf("login %s: status %d", user, r.status)
+	if r := c.login(user, "password-"+user); r.status != http.StatusOK {
+		c.e.t.Fatalf("login %s: status %d %s", user, r.status, r.body)
 	}
 }
 
@@ -268,29 +305,9 @@ func (c *client) sessionCookie() string {
 	return ""
 }
 
-var idRe = regexp.MustCompile(`/(\d+)$`)
-
-func idFromLocation(t *testing.T, loc string) int64 {
-	t.Helper()
-	m := idRe.FindStringSubmatch(loc)
-	if m == nil {
-		t.Fatalf("no id in location %q", loc)
-	}
-	id, _ := strconv.ParseInt(m[1], 10, 64)
-	return id
-}
-
 func expectStatus(t *testing.T, what string, r resp, want int) {
 	t.Helper()
 	if r.status != want {
-		t.Fatalf("%s: status %d, want %d\n%s", what, r.status, want, firstLines(r.body, 40))
+		t.Fatalf("%s: status %d, want %d\n%s", what, r.status, want, r.body)
 	}
-}
-
-func firstLines(s string, n int) string {
-	lines := strings.Split(s, "\n")
-	if len(lines) > n {
-		lines = lines[:n]
-	}
-	return strings.Join(lines, "\n")
 }

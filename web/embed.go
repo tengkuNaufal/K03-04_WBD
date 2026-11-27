@@ -1,7 +1,13 @@
-// Package webui embeds the HTML templates and static assets.
+// Package webui embeds the built SPA (web/dist, produced by `npm run build`).
 package webui
 
-import "embed"
+import (
+	"embed"
+	"io/fs"
+)
 
-//go:embed templates static
-var FS embed.FS
+//go:embed all:dist
+var dist embed.FS
+
+// FS is the content of web/dist: index.html and assets/.
+var FS, _ = fs.Sub(dist, "dist")
