@@ -25,7 +25,7 @@ export default function Migrations({ db }) {
               <td>{m.mode === 'batch' ? `batch (${m.batch_size})` : 'normal'}</td>
               <td><Status value={m.status} /></td>
               <td className="small">{m.created_by}<br />{time(m.created_at)}</td>
-              <td>{m.actions.map(a => ACTION_LABEL[a]).join(', ') || '–'}</td>
+              <td>{(m.actions ?? []).map(a => ACTION_LABEL[a]).join(', ') || '–'}</td>
             </tr>
           ))}</tbody>
         </Table>
