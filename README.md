@@ -6,7 +6,7 @@ Platform untuk mengatur akses ke database PostgreSQL bersama, menjelajahi schema
 perubahan schema/data lewat **migration** yang divalidasi, di-review, disetujui leader setiap tim, lalu dijalankan
 **asynchronous** oleh worker. Migration dapat di-rollback dan di-forward dengan riwayat yang tetap utuh.
 
-- **Backend & worker:** Go (`net/http`, `pgx/v5`, `log/slog`, OpenTelemetry)
+- **Backend & worker:** Go (`net/http`, `pgx/v5`, `log/slog`, OpenTelemetry, Prometheus client)
 - **Frontend:** SPA React + Vite (`web/`), di-embed ke binary Go dan berkomunikasi lewat JSON API
 - **Database platform & target:** PostgreSQL; queue juga disimpan di database platform
 
@@ -38,13 +38,14 @@ cd web && npm install && npm run build && cd ..          # SPA → web/dist (di-
 export DATABASE_URL="postgres://dbmp:dbmp@localhost:15432/dbmp?sslmode=disable"
 export APP_SECRET_KEY="ganti-dengan-rahasia-panjang" ADMIN_USERNAME=admin ADMIN_PASSWORD=admin12345
 go run ./cmd/server &      # API + SPA di :8080
-go run ./cmd/worker        # jalankan beberapa kali untuk beberapa worker
+go run ./cmd/worker        # jalankan beberapa kali untuk beberapa worker (METRICS_ADDR berbeda)
 # opsional: cd web && npm run dev  (Vite :5173, proxy /api ke :8080)
 ```
 
 Environment variable: `DATABASE_URL` (wajib), `APP_SECRET_KEY` (wajib, ≥16 karakter), `APP_ADDR` (default `:8080`),
-`COOKIE_SECURE` (`true` di HTTPS), `ADMIN_USERNAME`/`ADMIN_PASSWORD`
-(admin pertama), `LOG_LEVEL` (`debug` juga mencatat query database platform), `OTEL_TRACES_EXPORTER` (`console`/`none`).
+`METRICS_ADDR` (endpoint Prometheus, mis. `:9090`), `COOKIE_SECURE` (`true` di HTTPS), `ADMIN_USERNAME`/`ADMIN_PASSWORD`
+(admin pertama), `LOG_LEVEL` (`debug` juga mencatat query database platform), `OTEL_TRACES_EXPORTER` (`otlp`/`console`/`none`),
+`OTEL_LOGS_EXPORTER` (`otlp`/`none`), `OTEL_EXPORTER_OTLP_ENDPOINT`.
 
 ## Arsitektur
 
@@ -66,7 +67,7 @@ internal/workflow        aturan riwayat linear: apply / rollback / forward / res
 internal/worker          queue consumer: lock, revalidasi, eksekusi normal/batch, retry, recovery
 internal/store           query database platform (schema.sql, queue, history)
 internal/targetdb        akses database target: viewer, validasi/EXPLAIN, eksekusi + checkpoint
-internal/obs             log JSON, tracing OpenTelemetry, pencatat SQL
+internal/obs             log JSON, tracing OpenTelemetry, metrik Prometheus, pencatat SQL
 internal/web             JSON API, middleware (session, CSRF, tracing), penyajian SPA
 web/                     SPA React (src/) → dist/ (di-embed)
 ```
@@ -247,3 +248,91 @@ Semua endpoint di bawah `/api`, JSON. `X-CSRF-Token` wajib untuk method selain G
 | `GET /db/{id}/requests`, `GET …/requests/{rID}`, `POST …/approve`, `…/reject`, `…/cancel`, `…/execute` | review, approval, eksekusi (202 + `job_id`) |
 | `GET /db/{id}/jobs/{jobID}`, `GET /db/{id}/history?hide_rollback=1` | status job, migration history |
 | `/admin/users`, `/admin/groups` (`…/leader`, `…/members`, `…/grants`), `/admin/databases` | administrasi |
+
+## Bonus
+
+### Observability
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --build
+```
+
+- App dan worker mengirim **traces dan logs** lewat OTLP/HTTP ke **OpenTelemetry Collector**
+  ([`deploy/observability/otel-collector.yaml`](deploy/observability/otel-collector.yaml)), yang meneruskan traces ke
+  **Tempo** dan logs ke **Loki**. Log tetap juga keluar di stdout.
+- **Metrik Prometheus** di `METRICS_ADDR` (`:9090/metrics` di app dan setiap worker, port terpisah dari aplikasi).
+  Prometheus ([`prometheus.yml`](deploy/observability/prometheus.yml)) men-scrape app dan setiap replika worker (DNS).
+
+| Metrik | Isi |
+|---|---|
+| `dbmp_jobs{status}` | job queued / running / done / failed |
+| `dbmp_jobs_completed_total{result}`, `dbmp_job_retries_total` | job selesai per hasil, retry |
+| `dbmp_queue_wait_seconds`, `dbmp_lock_wait_seconds` | waktu tunggu queue dan lock (histogram) |
+| `dbmp_migration_duration_seconds{action,mode,result}` | durasi migration |
+| `dbmp_migration_batches_total{direction}`, `dbmp_migration_rows_total{direction}` | batch/row diproses |
+| `dbmp_db_pool_connections{pool,state}`, `dbmp_db_pool_acquire_wait_seconds_total{pool}`, `dbmp_db_pool_acquires_total{pool}` | koneksi aktif/idle, waktu tunggu koneksi (pool `platform`/`target`) |
+| `dbmp_http_requests_total{route,method,code}`, `dbmp_http_request_duration_seconds{route,method}` | API |
+
+  Label hanya bernilai terbatas (pola route, status, aksi); tidak ada user ID, job ID, atau SQL sebagai label.
+- **Grafana** <http://localhost:3000> (provisioning otomatis: datasource + dashboard
+  [`dbmp.json`](deploy/observability/grafana/dashboards/dbmp.json)) menampilkan job per status, throughput, retry,
+  waktu tunggu queue dan lock, durasi migration, batch/row per detik, koneksi aktif/idle, waktu tunggu koneksi,
+  serta request rate, p95, dan error rate API.
+- **Korelasi:** setiap log membawa `trace_id`. Di Grafana → Explore → Loki, field `trace_id` menjadi tautan ke trace di
+  Tempo, dan dari span di Tempo tersedia *Logs for this span* (query Loki dengan `trace_id` yang sama). Panel metrik dan
+  trace dicocokkan berdasarkan waktu/route. Riwayat migration di SPA juga menampilkan `trace_id` tiap eksekusi.
+  Contoh hasil nyata (log Loki → trace Tempo yang mencakup server dan worker, plus metrik):
+  [`docs/samples/korelasi.md`](docs/samples/korelasi.md).
+
+### Stress testing dengan k6
+
+Script: [`loadtest/stress.js`](loadtest/stress.js). Setup membuat group `k6` (admin sebagai leader) dan dua koneksi
+(`k6-lab`, `k6-shop`) yang hanya bisa diakses group itu. Dua skenario berjalan bersamaan:
+
+- `api`: user membuka daftar database, table, row, migration, dan riwayat. Beban normal 10 VU → 30 VU → 60 VU (stress)
+  → kembali 10 VU (pemulihan), tiap tahap 30 s.
+- `jobs`: user membuat migration, mengajukan, menyetujui, menjalankan (job ke queue), lalu **memantau job sampai worker
+  selesai**. Respons 202 tidak dihitung sukses; hanya status `success` dari worker. VU bergantian ke dua database:
+  job pada database yang sama antre di lock, job pada database berbeda berjalan paralel. 2 → 6 → 2 VU.
+- **Threshold:** API p95 < 500 ms dan p50 < 150 ms, `http_req_failed` < 1%, `job_success` > 95%, job end-to-end p95 < 30 s.
+
+```bash
+docker run --rm -v "$PWD/loadtest:/scripts" -e BASE_URL=http://host.docker.internal:8080 \
+  -e TARGET_HOST=sample-db grafana/k6:0.54.0 run --out json=/scripts/results/raw.json /scripts/stress.js
+python loadtest/stages.py loadtest/results/raw.json      # statistik per tahap beban
+```
+
+Hasil (server + 2 worker di laptop Windows 11, PostgreSQL di Docker Desktop, stack observability ikut berjalan; total
+4 menit 11 s, semua threshold lulus, ringkasan di [`loadtest/results/summary.json`](loadtest/results/summary.json)
+dan [`loadtest/results/k6-output.txt`](loadtest/results/k6-output.txt)):
+
+| Tahap | API req/s | API p50 (ms) | API p95 (ms) | Error rate | Job selesai/s | Queue wait p50 / p95 (ms) | Job e2e p50 / p95 (ms) |
+|---|---|---|---|---|---|---|---|
+| normal: api 10 VU, jobs 2 VU | 47,2 | 8,1 | 37,6 | 0,00% | 1,90 | 644 / 915 | 1058 / 1110 |
+| 3×: api 30 VU, jobs 2→6 VU | 135,8 | 12,9 | 46,3 | 0,00% | 2,80 | 798 / 943 | 1036 / 3071 |
+| 6× (stress): api 60 VU, jobs 6 VU | 280,0 | 11,1 | 32,0 | 0,00% | 5,23 | 647 / 975 | 1045 / 1093 |
+| pemulihan: api 10 VU, jobs 2 VU | 46,8 | 8,0 | 29,7 | 0,00% | 1,70 | 612 / 960 | 1036 / 1085 |
+
+Total: 34.453 request (137,2/s), 0 error; 696 job selesai (2,77/s), 100% sukses, 0 retry
+(`dbmp_job_retries_total`); eksekusi job p50 26 ms, p95 100 ms.
+
+**Analisis.**
+- Throughput API naik hampir linear dengan jumlah VU (47 → 136 → 280 req/s) tanpa error, dan p95 tetap di bawah
+  50 ms di semua tahap (jauh dari batas 500 ms). Pada 6× beban p95 justru sedikit lebih rendah daripada 3× karena
+  koneksi pool dan cache PostgreSQL sudah hangat; perbedaan sekecil ini masih dalam variasi antar-run. Batas atas
+  belum tercapai di 60 VU, jadi titik jenuh ada di atas beban ini. Setelah beban turun, p50 kembali ke ±8 ms dan p95
+  ke ±30 ms; sistem pulih tanpa restart.
+- Throughput job naik dari 1,9 ke 5,2 job/s karena job pada dua database berbeda berjalan paralel di dua worker,
+  sedangkan job pada database yang sama tetap berurutan (lock).
+- Pada tahap 3× (saat job naik 2 → 6 VU) ada lonjakan job end-to-end p95 3,1 s dengan eksekusi terlama 2,2 s. Waktu
+  tunggu queue tidak ikut naik, jadi lonjakan ada di eksekusi SQL di database target, bukan di queue atau lock
+  worker. Lonjakan ini sesaat (tidak berulang pada 6×, median tetap ±1 s) dan dapat ditelusuri di Tempo lewat span
+  `queue.process`/`migration.transaction` dengan durasi terlama.
+- Waktu tunggu queue (±0,6–1 s) didominasi interval polling worker (1 s saat queue kosong), bukan beban; eksekusi SQL
+  sendiri hanya puluhan ms. Untuk mempercepat: interval polling lebih pendek atau `LISTEN/NOTIFY`, dan tambah worker
+  (`--scale worker=N`) untuk lebih banyak database paralel.
+
+### Security: SAST dengan CodeQL
+
+Lihat [`docs/codeql.md`](docs/codeql.md): workflow [`.github/workflows/codeql.yml`](.github/workflows/codeql.yml)
+(Go dan JavaScript, suite `security-extended`), hasil scan, dan keputusan untuk setiap temuan.
