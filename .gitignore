@@ -7,3 +7,5 @@ coverage.out
 web/node_modules/
 web/dist/*
 !web/dist/.gitkeep
+/loadtest/results/raw.json
+/codeql-db/
