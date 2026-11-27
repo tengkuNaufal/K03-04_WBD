@@ -1,0 +1,882 @@
+[
+  {
+    "Name": "queue.publish",
+    "SpanContext": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "505fd14a84ee1a01",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": false
+    },
+    "Parent": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "33cb051746a8a739",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": false
+    },
+    "SpanKind": 4,
+    "StartTime": "2026-11-22T15:14:03.8580001+07:00",
+    "EndTime": "2026-11-22T15:14:03.8691115+07:00",
+    "Attributes": [
+      {
+        "Key": "request.id",
+        "Value": {
+          "Type": "INT64",
+          "Value": 1558
+        }
+      },
+      {
+        "Key": "database.id",
+        "Value": {
+          "Type": "INT64",
+          "Value": 2
+        }
+      },
+      {
+        "Key": "job.id",
+        "Value": {
+          "Type": "INT64",
+          "Value": 1558
+        }
+      }
+    ],
+    "Events": null,
+    "Links": null,
+    "Status": {
+      "Code": "Unset",
+      "Description": ""
+    },
+    "DroppedAttributes": 0,
+    "DroppedEvents": 0,
+    "DroppedLinks": 0,
+    "ChildSpanCount": 8,
+    "Resource": [
+      {
+        "Key": "service.name",
+        "Value": {
+          "Type": "STRING",
+          "Value": "dbmp-server"
+        }
+      }
+    ],
+    "InstrumentationScope": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    },
+    "InstrumentationLibrary": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    }
+  },
+  {
+    "Name": "POST /api/db/{dbID}/requests/{rID}/execute",
+    "SpanContext": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "33cb051746a8a739",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": false
+    },
+    "Parent": {
+      "TraceID": "00000000000000000000000000000000",
+      "SpanID": "0000000000000000",
+      "TraceFlags": "00",
+      "TraceState": "",
+      "Remote": false
+    },
+    "SpanKind": 2,
+    "StartTime": "2026-11-22T15:14:03.8537264+07:00",
+    "EndTime": "2026-11-22T15:14:03.8691115+07:00",
+    "Attributes": [
+      {
+        "Key": "http.method",
+        "Value": {
+          "Type": "STRING",
+          "Value": "POST"
+        }
+      },
+      {
+        "Key": "http.route",
+        "Value": {
+          "Type": "STRING",
+          "Value": "POST /api/db/{dbID}/requests/{rID}/execute"
+        }
+      },
+      {
+        "Key": "http.status_code",
+        "Value": {
+          "Type": "INT64",
+          "Value": 202
+        }
+      }
+    ],
+    "Events": null,
+    "Links": null,
+    "Status": {
+      "Code": "Unset",
+      "Description": ""
+    },
+    "DroppedAttributes": 0,
+    "DroppedEvents": 0,
+    "DroppedLinks": 0,
+    "ChildSpanCount": 6,
+    "Resource": [
+      {
+        "Key": "service.name",
+        "Value": {
+          "Type": "STRING",
+          "Value": "dbmp-server"
+        }
+      }
+    ],
+    "InstrumentationScope": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    },
+    "InstrumentationLibrary": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    }
+  },
+  {
+    "Name": "lock.acquire",
+    "SpanContext": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "8d871333aad960f4",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": false
+    },
+    "Parent": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "2705927ff9312806",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": false
+    },
+    "SpanKind": 1,
+    "StartTime": "2026-11-22T15:14:04.4192411+07:00",
+    "EndTime": "2026-11-22T15:14:04.4207908+07:00",
+    "Attributes": [
+      {
+        "Key": "database.id",
+        "Value": {
+          "Type": "INT64",
+          "Value": 2
+        }
+      },
+      {
+        "Key": "lock.acquired",
+        "Value": {
+          "Type": "BOOL",
+          "Value": true
+        }
+      }
+    ],
+    "Events": null,
+    "Links": null,
+    "Status": {
+      "Code": "Unset",
+      "Description": ""
+    },
+    "DroppedAttributes": 0,
+    "DroppedEvents": 0,
+    "DroppedLinks": 0,
+    "ChildSpanCount": 1,
+    "Resource": [
+      {
+        "Key": "service.name",
+        "Value": {
+          "Type": "STRING",
+          "Value": "dbmp-worker"
+        }
+      }
+    ],
+    "InstrumentationScope": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    },
+    "InstrumentationLibrary": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    }
+  },
+  {
+    "Name": "migration.revalidate",
+    "SpanContext": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "c4f98bb9630af55b",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": false
+    },
+    "Parent": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "2705927ff9312806",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": false
+    },
+    "SpanKind": 1,
+    "StartTime": "2026-11-22T15:14:04.4338003+07:00",
+    "EndTime": "2026-11-22T15:14:04.4423654+07:00",
+    "Attributes": null,
+    "Events": null,
+    "Links": null,
+    "Status": {
+      "Code": "Unset",
+      "Description": ""
+    },
+    "DroppedAttributes": 0,
+    "DroppedEvents": 0,
+    "DroppedLinks": 0,
+    "ChildSpanCount": 3,
+    "Resource": [
+      {
+        "Key": "service.name",
+        "Value": {
+          "Type": "STRING",
+          "Value": "dbmp-worker"
+        }
+      }
+    ],
+    "InstrumentationScope": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    },
+    "InstrumentationLibrary": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    }
+  },
+  {
+    "Name": "migration.batch",
+    "SpanContext": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "1c646ca1c8bba633",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": false
+    },
+    "Parent": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "2705927ff9312806",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": false
+    },
+    "SpanKind": 1,
+    "StartTime": "2026-11-22T15:14:04.4719122+07:00",
+    "EndTime": "2026-11-22T15:14:04.4814186+07:00",
+    "Attributes": [
+      {
+        "Key": "batch",
+        "Value": {
+          "Type": "INT64",
+          "Value": 1
+        }
+      },
+      {
+        "Key": "cursor.from",
+        "Value": {
+          "Type": "INT64",
+          "Value": -9223372036854775808
+        }
+      },
+      {
+        "Key": "cursor.to",
+        "Value": {
+          "Type": "INT64",
+          "Value": 400
+        }
+      }
+    ],
+    "Events": null,
+    "Links": null,
+    "Status": {
+      "Code": "Unset",
+      "Description": ""
+    },
+    "DroppedAttributes": 0,
+    "DroppedEvents": 0,
+    "DroppedLinks": 0,
+    "ChildSpanCount": 5,
+    "Resource": [
+      {
+        "Key": "service.name",
+        "Value": {
+          "Type": "STRING",
+          "Value": "dbmp-worker"
+        }
+      }
+    ],
+    "InstrumentationScope": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    },
+    "InstrumentationLibrary": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    }
+  },
+  {
+    "Name": "migration.batch",
+    "SpanContext": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "2ff0f1280e756f9e",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": false
+    },
+    "Parent": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "2705927ff9312806",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": false
+    },
+    "SpanKind": 1,
+    "StartTime": "2026-11-22T15:14:04.4842036+07:00",
+    "EndTime": "2026-11-22T15:14:04.4896891+07:00",
+    "Attributes": [
+      {
+        "Key": "batch",
+        "Value": {
+          "Type": "INT64",
+          "Value": 2
+        }
+      },
+      {
+        "Key": "cursor.from",
+        "Value": {
+          "Type": "INT64",
+          "Value": 400
+        }
+      },
+      {
+        "Key": "cursor.to",
+        "Value": {
+          "Type": "INT64",
+          "Value": 800
+        }
+      }
+    ],
+    "Events": null,
+    "Links": null,
+    "Status": {
+      "Code": "Unset",
+      "Description": ""
+    },
+    "DroppedAttributes": 0,
+    "DroppedEvents": 0,
+    "DroppedLinks": 0,
+    "ChildSpanCount": 5,
+    "Resource": [
+      {
+        "Key": "service.name",
+        "Value": {
+          "Type": "STRING",
+          "Value": "dbmp-worker"
+        }
+      }
+    ],
+    "InstrumentationScope": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    },
+    "InstrumentationLibrary": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    }
+  },
+  {
+    "Name": "migration.batch",
+    "SpanContext": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "da87f078fbeeb49a",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": false
+    },
+    "Parent": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "2705927ff9312806",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": false
+    },
+    "SpanKind": 1,
+    "StartTime": "2026-11-22T15:14:04.4927035+07:00",
+    "EndTime": "2026-11-22T15:14:04.4984376+07:00",
+    "Attributes": [
+      {
+        "Key": "batch",
+        "Value": {
+          "Type": "INT64",
+          "Value": 3
+        }
+      },
+      {
+        "Key": "cursor.from",
+        "Value": {
+          "Type": "INT64",
+          "Value": 800
+        }
+      },
+      {
+        "Key": "cursor.to",
+        "Value": {
+          "Type": "INT64",
+          "Value": 1200
+        }
+      }
+    ],
+    "Events": null,
+    "Links": null,
+    "Status": {
+      "Code": "Unset",
+      "Description": ""
+    },
+    "DroppedAttributes": 0,
+    "DroppedEvents": 0,
+    "DroppedLinks": 0,
+    "ChildSpanCount": 5,
+    "Resource": [
+      {
+        "Key": "service.name",
+        "Value": {
+          "Type": "STRING",
+          "Value": "dbmp-worker"
+        }
+      }
+    ],
+    "InstrumentationScope": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    },
+    "InstrumentationLibrary": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    }
+  },
+  {
+    "Name": "migration.batch",
+    "SpanContext": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "deca144056d60e31",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": false
+    },
+    "Parent": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "2705927ff9312806",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": false
+    },
+    "SpanKind": 1,
+    "StartTime": "2026-11-22T15:14:04.5010117+07:00",
+    "EndTime": "2026-11-22T15:14:04.5063842+07:00",
+    "Attributes": [
+      {
+        "Key": "batch",
+        "Value": {
+          "Type": "INT64",
+          "Value": 4
+        }
+      },
+      {
+        "Key": "cursor.from",
+        "Value": {
+          "Type": "INT64",
+          "Value": 1200
+        }
+      },
+      {
+        "Key": "cursor.to",
+        "Value": {
+          "Type": "INT64",
+          "Value": 1600
+        }
+      }
+    ],
+    "Events": null,
+    "Links": null,
+    "Status": {
+      "Code": "Unset",
+      "Description": ""
+    },
+    "DroppedAttributes": 0,
+    "DroppedEvents": 0,
+    "DroppedLinks": 0,
+    "ChildSpanCount": 5,
+    "Resource": [
+      {
+        "Key": "service.name",
+        "Value": {
+          "Type": "STRING",
+          "Value": "dbmp-worker"
+        }
+      }
+    ],
+    "InstrumentationScope": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    },
+    "InstrumentationLibrary": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    }
+  },
+  {
+    "Name": "migration.batch",
+    "SpanContext": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "9246a7bbbbee352a",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": false
+    },
+    "Parent": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "2705927ff9312806",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": false
+    },
+    "SpanKind": 1,
+    "StartTime": "2026-11-22T15:14:04.509886+07:00",
+    "EndTime": "2026-11-22T15:14:04.5149675+07:00",
+    "Attributes": [
+      {
+        "Key": "batch",
+        "Value": {
+          "Type": "INT64",
+          "Value": 5
+        }
+      },
+      {
+        "Key": "cursor.from",
+        "Value": {
+          "Type": "INT64",
+          "Value": 1600
+        }
+      },
+      {
+        "Key": "cursor.to",
+        "Value": {
+          "Type": "INT64",
+          "Value": 1777
+        }
+      }
+    ],
+    "Events": null,
+    "Links": null,
+    "Status": {
+      "Code": "Unset",
+      "Description": ""
+    },
+    "DroppedAttributes": 0,
+    "DroppedEvents": 0,
+    "DroppedLinks": 0,
+    "ChildSpanCount": 5,
+    "Resource": [
+      {
+        "Key": "service.name",
+        "Value": {
+          "Type": "STRING",
+          "Value": "dbmp-worker"
+        }
+      }
+    ],
+    "InstrumentationScope": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    },
+    "InstrumentationLibrary": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    }
+  },
+  {
+    "Name": "queue.process",
+    "SpanContext": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "2705927ff9312806",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": false
+    },
+    "Parent": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "505fd14a84ee1a01",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": true
+    },
+    "SpanKind": 5,
+    "StartTime": "2026-11-22T15:14:04.4065535+07:00",
+    "EndTime": "2026-11-22T15:14:04.5260876+07:00",
+    "Attributes": [
+      {
+        "Key": "job.id",
+        "Value": {
+          "Type": "INT64",
+          "Value": 1558
+        }
+      },
+      {
+        "Key": "request.id",
+        "Value": {
+          "Type": "INT64",
+          "Value": 1558
+        }
+      },
+      {
+        "Key": "database.id",
+        "Value": {
+          "Type": "INT64",
+          "Value": 2
+        }
+      },
+      {
+        "Key": "job.attempt",
+        "Value": {
+          "Type": "INT64",
+          "Value": 1
+        }
+      }
+    ],
+    "Events": null,
+    "Links": null,
+    "Status": {
+      "Code": "Unset",
+      "Description": ""
+    },
+    "DroppedAttributes": 0,
+    "DroppedEvents": 0,
+    "DroppedLinks": 0,
+    "ChildSpanCount": 34,
+    "Resource": [
+      {
+        "Key": "service.name",
+        "Value": {
+          "Type": "STRING",
+          "Value": "dbmp-worker"
+        }
+      }
+    ],
+    "InstrumentationScope": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    },
+    "InstrumentationLibrary": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    }
+  },
+  {
+    "Name": "db.query",
+    "SpanContext": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "c36fb1684497d767",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": false
+    },
+    "Parent": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "33cb051746a8a739",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": false
+    },
+    "SpanKind": 3,
+    "StartTime": "2026-11-22T15:14:03.8537264+07:00",
+    "EndTime": "2026-11-22T15:14:03.8542345+07:00",
+    "Attributes": [
+      {
+        "Key": "db.system",
+        "Value": {
+          "Type": "STRING",
+          "Value": "postgresql"
+        }
+      },
+      {
+        "Key": "db.pool",
+        "Value": {
+          "Type": "STRING",
+          "Value": "platform"
+        }
+      },
+      {
+        "Key": "db.statement",
+        "Value": {
+          "Type": "STRING",
+          "Value": "\n\t\tSELECT f.id, f.user_id, f.csrf_token, f.created_at, f.last_seen_at, f.absolute_expires_at,\n\t\t       f.revoked_at, f.rotate_required, t.token_hash, t.issued_at, t.superseded_at\n\t\tFROM session_tokens t JOIN session_families f ON f.id = t.family_id\n\t\tWHERE t.token_hash = $1"
+        }
+      },
+      {
+        "Key": "db.rows_affected",
+        "Value": {
+          "Type": "INT64",
+          "Value": 1
+        }
+      }
+    ],
+    "Events": null,
+    "Links": null,
+    "Status": {
+      "Code": "Unset",
+      "Description": ""
+    },
+    "DroppedAttributes": 0,
+    "DroppedEvents": 0,
+    "DroppedLinks": 0,
+    "ChildSpanCount": 0,
+    "Resource": [
+      {
+        "Key": "service.name",
+        "Value": {
+          "Type": "STRING",
+          "Value": "dbmp-server"
+        }
+      }
+    ],
+    "InstrumentationScope": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    },
+    "InstrumentationLibrary": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    }
+  },
+  {
+    "Name": "db.query",
+    "SpanContext": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "48b837d8d15c57ad",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": false
+    },
+    "Parent": {
+      "TraceID": "68289310307043bc8ea7a746dd16b7e0",
+      "SpanID": "33cb051746a8a739",
+      "TraceFlags": "01",
+      "TraceState": "",
+      "Remote": false
+    },
+    "SpanKind": 3,
+    "StartTime": "2026-11-22T15:14:03.8542345+07:00",
+    "EndTime": "2026-11-22T15:14:03.8562945+07:00",
+    "Attributes": [
+      {
+        "Key": "db.system",
+        "Value": {
+          "Type": "STRING",
+          "Value": "postgresql"
+        }
+      },
+      {
+        "Key": "db.pool",
+        "Value": {
+          "Type": "STRING",
+          "Value": "platform"
+        }
+      },
+      {
+        "Key": "db.statement",
+        "Value": {
+          "Type": "STRING",
+          "Value": "UPDATE session_families SET last_seen_at = GREATEST(last_seen_at, $2) WHERE id = $1"
+        }
+      },
+      {
+        "Key": "db.rows_affected",
+        "Value": {
+          "Type": "INT64",
+          "Value": 1
+        }
+      }
+    ],
+    "Events": null,
+    "Links": null,
+    "Status": {
+      "Code": "Unset",
+      "Description": ""
+    },
+    "DroppedAttributes": 0,
+    "DroppedEvents": 0,
+    "DroppedLinks": 0,
+    "ChildSpanCount": 0,
+    "Resource": [
+      {
+        "Key": "service.name",
+        "Value": {
+          "Type": "STRING",
+          "Value": "dbmp-server"
+        }
+      }
+    ],
+    "InstrumentationScope": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    },
+    "InstrumentationLibrary": {
+      "Name": "dbmp",
+      "Version": "",
+      "SchemaURL": "",
+      "Attributes": null
+    }
+  }
+]
