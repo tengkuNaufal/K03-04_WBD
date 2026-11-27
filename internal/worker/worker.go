@@ -90,6 +90,7 @@ func (w *Worker) process(ctx context.Context, job model.Job) {
 	if job.RunAfter.After(queued) {
 		queued = job.RunAfter
 	}
+	obs.QueueWait.Observe(time.Since(queued).Seconds())
 	log.InfoContext(ctx, "job claimed", "event", "job.claimed", "status", "running", "queue_wait_ms", time.Since(queued).Milliseconds())
 
 	unlock, ok, err := w.lock(ctx, job.DatabaseID)
@@ -122,7 +123,7 @@ func (w *Worker) process(ctx context.Context, job model.Job) {
 		log.WarnContext(ctx, "revalidation failed", "event", "migration.revalidate", "status", "failed", "error", err)
 		obs.End(span, err)
 		w.finish(saveCtx, log, store.Outcome{Job: job, Request: req, ReqStatus: model.ReqFailed,
-			Error: "Revalidasi gagal: " + err.Error(), Batches: req.BatchesDone, Rows: req.RowsDone}, 0)
+			Error: "Revalidasi gagal: " + err.Error(), Batches: req.BatchesDone, Rows: req.RowsDone}, mig, 0)
 		return
 	}
 	if err := w.Store.SetRequestRunning(ctx, req.ID); err != nil {
@@ -133,10 +134,10 @@ func (w *Worker) process(ctx context.Context, job model.Job) {
 	if o.Error != "" {
 		span.SetAttributes(attribute.String("migration.error", o.Error))
 	}
-	w.finish(saveCtx, log, o, time.Since(start))
+	w.finish(saveCtx, log, o, mig, time.Since(start))
 }
 
-func (w *Worker) finish(ctx context.Context, log *slog.Logger, o store.Outcome, took time.Duration) {
+func (w *Worker) finish(ctx context.Context, log *slog.Logger, o store.Outcome, mig model.Migration, took time.Duration) {
 	if err := w.Store.Finish(ctx, o); err != nil {
 		log.ErrorContext(ctx, "record outcome failed", "event", "job.record", "status", "error", "error", err)
 		return
@@ -144,6 +145,12 @@ func (w *Worker) finish(ctx context.Context, log *slog.Logger, o store.Outcome, 
 	result := o.ReqStatus
 	if o.RetryAfter > 0 {
 		result = "retry"
+		obs.JobRetries.Inc()
+	} else {
+		obs.JobsCompleted.WithLabelValues(o.ReqStatus).Inc()
+	}
+	if took > 0 {
+		obs.MigrationDuration.WithLabelValues(o.Request.Action, mig.Mode, result).Observe(took.Seconds())
 	}
 	log.InfoContext(ctx, "job finished", "event", "job.finished", "status", result, "execution_id", o.ExecutionID,
 		"batches", o.Batches, "rows", o.Rows, "duration_ms", took.Milliseconds(), "retry_in_s", o.RetryAfter.Seconds(), "error", o.Error)
@@ -163,7 +170,7 @@ func (w *Worker) lock(ctx context.Context, databaseID int64) (unlock func(), ok 
 		conn.Release()
 		return nil, false, err
 	}
-	span.SetAttributes(attribute.Int64("lock.wait_ms", time.Since(start).Milliseconds()))
+	obs.LockWait.Observe(time.Since(start).Seconds())
 	return func() { release(conn, databaseID) }, true, nil
 }
 
@@ -322,6 +329,7 @@ func (w *Worker) runOnce(ctx context.Context, log *slog.Logger, req model.Reques
 		return runResult{}, err
 	}
 	log.InfoContext(ctx, "migration committed", "event", "migration.commit", "status", "committed", "rows", n)
+	obs.Rows.WithLabelValues(req.Direction).Add(float64(n))
 	return runResult{rows: n, attemptRows: n, attemptBatches: 1}, nil
 }
 
@@ -371,6 +379,8 @@ func (w *Worker) runBatches(ctx context.Context, log *slog.Logger, req model.Req
 		res.rows, res.attemptRows = res.rows+n, res.attemptRows+n
 		blog.InfoContext(bctx, "batch committed", "event", "migration.batch.commit", "status", "committed", "rows", n,
 			"committed_batches", res.batches, "committed_rows", res.rows)
+		obs.Batches.WithLabelValues(req.Direction).Inc()
+		obs.Rows.WithLabelValues(req.Direction).Add(float64(n))
 		if err := w.Store.SetProgress(context.WithoutCancel(ctx), req.ID, res.batches, res.rows); err != nil {
 			blog.WarnContext(bctx, "progress not saved", "event", "migration.progress", "status", "error", "error", err)
 		}

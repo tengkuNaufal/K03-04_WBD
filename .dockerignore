@@ -4,3 +4,4 @@ coverage.out
 .env
 web/node_modules
 web/dist
+codeql-db

@@ -29,7 +29,9 @@ func view(st workflow.State, m model.Migration, canEdit bool) migrationView {
 	if !canEdit {
 		return v
 	}
-	v.Actions = workflow.Actions(st, m)
+	if acts := workflow.Actions(st, m); acts != nil {
+		v.Actions = acts
+	}
 	v.Editable = m.Status == model.MigrationDraft && !m.Locked
 	for _, r := range st.Requests {
 		if r.MigrationID == m.ID && model.Open(r.Status) {

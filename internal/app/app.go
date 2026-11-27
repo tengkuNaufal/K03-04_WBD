@@ -57,5 +57,11 @@ func Open(ctx context.Context, service string) (*Deps, error) {
 	d.Store = store.New(d.Pool)
 	d.Targets = targetdb.NewManager(d.Store, d.Box)
 	d.close = append(d.close, d.Targets.Close)
+
+	obs.RegisterPools(map[string]obs.PoolStats{
+		"platform": func() []*pgxpool.Stat { return []*pgxpool.Stat{d.Pool.Stat()} },
+		"target":   d.Targets.Stats,
+	})
+	obs.ServeMetrics(os.Getenv("METRICS_ADDR"))
 	return d, nil
 }

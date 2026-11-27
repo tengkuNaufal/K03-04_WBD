@@ -19,5 +19,5 @@ FROM alpine:3.22
 RUN adduser -D -H app
 USER app
 COPY --from=build /out/ /usr/local/bin/
-EXPOSE 8080
+EXPOSE 8080 9090
 ENTRYPOINT ["/usr/local/bin/dbmp-server"]

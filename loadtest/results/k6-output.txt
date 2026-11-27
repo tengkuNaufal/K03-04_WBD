@@ -1,0 +1,10 @@
+
+http_req_duration{scenario:api} ms: avg=15.5 p50=10.3 p95=36.9 max=739.3
+http_reqs: 34453 (137.2/s)
+http_req_failed: 0.00%
+jobs_completed: 696 (2.77/s)
+job_success: 100.0%
+job_queue_wait_ms: avg=691.4 p50=676.5 p95=966.3 max=1023.0
+job_exec_ms: avg=93.9 p50=26.0 p95=100.3 max=2219.0
+job_e2e_ms: avg=1087.9 p50=1043.0 p95=1323.0 max=3608.0
+thresholds: job_e2e_ms OK, http_req_duration{scenario:api} OK, job_success OK, http_req_failed OK
